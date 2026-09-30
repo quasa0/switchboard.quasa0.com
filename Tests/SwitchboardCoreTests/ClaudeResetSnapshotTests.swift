@@ -80,4 +80,36 @@ final class ClaudeResetSnapshotTests: XCTestCase {
         XCTAssertFalse(String(decoding:data,as:UTF8.self).contains("synthetic-private-value"))
         XCTAssertEqual(try JSONDecoder().decode(ClaudeResetSnapshot.self,from:data),value)
     }
+
+    func testSurfaceEligibilityDoesNotHideOwnedUnexpiredGrants() throws {
+        var row = grant
+        row["usable_now"] = false
+        let snapshot = try ClaudeResetSnapshot.parse(["eligible": false, "ineligible_reason": "surface", "grants": [row]])
+        let start = try XCTUnwrap(snapshot.grants.first?.startsAt)
+        XCTAssertTrue(snapshot.confirmsGrantInventory)
+        XCTAssertEqual(snapshot.unexpiredGrants(at: start).map(\.resetsLeft), [1])
+        XCTAssertFalse(snapshot.grants[0].usableNow)
+        for (field, value) in [("paused", true as Any), ("starts_at", "2026-10-01T16:00:00Z" as Any)] {
+            var restricted = row; restricted[field] = value
+            let result = try ClaudeResetSnapshot.parse(["eligible": true, "grants": [restricted]])
+            XCTAssertEqual(result.unexpiredGrants(at: start).count, 1)
+            XCTAssertFalse(result.grants[0].isAvailable(at: start))
+        }
+        XCTAssertTrue(snapshot.unexpiredGrants(at: try XCTUnwrap(snapshot.grants[0].expiresAt)).isEmpty)
+    }
+
+    func testIneligibleEmptyResponseDoesNotConfirmZeroAndUnavailableIsFailedRead() throws {
+        for reason in ["surface", "cli_version", "config_off", "tier", "no_grant", "unknown"] {
+            let value = try ClaudeResetSnapshot.parse(["eligible": false, "ineligible_reason": reason, "grants": []])
+            XCTAssertFalse(value.confirmsGrantInventory)
+            XCTAssertEqual(value.ineligibleReason, reason)
+        }
+        XCTAssertTrue(try ClaudeResetSnapshot.parse(["eligible": true, "grants": []]).confirmsGrantInventory)
+        XCTAssertThrowsError(try ClaudeResetSnapshot.parse(["eligible": false, "ineligible_reason": "unavailable", "grants": []]))
+        let sanitized = try ClaudeResetSnapshot.parse(["eligible": false, "ineligible_reason": "synthetic-private-value", "grants": []])
+        XCTAssertEqual(sanitized.ineligibleReason, "unknown")
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(sanitized), as: UTF8.self).contains("synthetic-private-value"))
+        let existing = Data(#"{"checkedAt":0,"eligible":false,"grants":[]}"#.utf8)
+        XCTAssertFalse(try JSONDecoder().decode(ClaudeResetSnapshot.self, from: existing).confirmsGrantInventory)
+    }
 }

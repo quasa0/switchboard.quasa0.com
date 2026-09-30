@@ -151,6 +151,11 @@ public final class AccountRepository {
             throw SwitchboardError.message("This account is no longer saved.")
         }
         var updated = billing
+        if updated.resetSnapshot?.confirmsGrantInventory == false,
+           let previous = accounts[index].claudeBilling?.resetSnapshot, previous.confirmsGrantInventory {
+            updated.resetSnapshot = previous
+            updated.resetReadFailed = true
+        }
         if updated.resetReadFailed == true, updated.resetSnapshot == nil {
             updated.resetSnapshot = accounts[index].claudeBilling?.resetSnapshot
         }
@@ -177,6 +182,11 @@ public final class AccountRepository {
         var accounts = try accounts()
         guard let index = accounts.firstIndex(where: { $0.id == id }) else { return }
         var updated = usage
+        if updated.claudeResetSnapshot?.confirmsGrantInventory == false,
+           let previous = accounts[index].usage?.claudeResetSnapshot, previous.confirmsGrantInventory {
+            updated.claudeResetSnapshot = previous
+            updated.claudeResetReadFailed = true
+        }
         if updated.claudeResetReadFailed == true, updated.claudeResetSnapshot == nil {
             updated.claudeResetSnapshot = accounts[index].usage?.claudeResetSnapshot
         }

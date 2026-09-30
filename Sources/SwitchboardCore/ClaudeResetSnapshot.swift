@@ -5,6 +5,17 @@ public struct ClaudeResetSnapshot: Codable, Equatable, Sendable {
     public var checkedAt: Date
     public var eligible: Bool
     public var grants: [Grant]
+    /// Eligibility is scoped to the responding Claude surface, not an account-wide reset balance.
+    public var ineligibleReason: String? = nil
+
+    public var confirmsGrantInventory: Bool {
+        eligible || !grants.isEmpty
+    }
+
+    public func unexpiredGrants(at now: Date) -> [Grant] {
+        grants.filter { $0.resetsLeft > 0 && ($0.expiresAt == nil || $0.expiresAt! > now) }
+            .sorted { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }
+    }
 
     public struct Grant: Codable, Identifiable, Equatable, Sendable {
         public var id: String
@@ -55,7 +66,12 @@ public struct ClaudeResetSnapshot: Codable, Equatable, Sendable {
             return Grant(id: id, resetsLeft: left.intValue, clears: clears, startsAt: start,
                          expiresAt: expiry, paused: paused, usableNow: usable)
         }
-        return Self(checkedAt: checkedAt, eligible: eligible, grants: grants)
+        let reasons: Set<String> = ["config_off", "tier", "seat", "mobile", "surface", "cli_version",
+                                    "no_grant", "tenure", "other_experiment", "unavailable", "unknown"]
+        let reason = (object["ineligible_reason"] as? String).map { reasons.contains($0) ? $0 : "unknown" }
+        // Claude Code itself treats this in-band status as a failed read, even with HTTP 200.
+        guard reason != "unavailable" else { throw failure }
+        return Self(checkedAt: checkedAt, eligible: eligible, grants: grants, ineligibleReason: reason)
     }
 
     private static func timestamp(_ value: Any?) -> Date? {

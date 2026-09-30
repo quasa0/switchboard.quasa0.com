@@ -130,6 +130,20 @@ test('missing reset block remains unavailable',async()=>{
   const result=await execute([response(bootstrap()),response({status:'active'}),response({five_hour:null})]);
   assert.equal(result.envelope.resetDetails,null);
 });
+test('retains surface eligibility separately from owned reset grants',async()=>{
+  const grant = {id:'restricted-reset',resets_left:1,clears:['five_hour','seven_day'],paused:false,usable_now:false};
+  const result=await execute([response(bootstrap()),response({status:'active'}),
+    response({cedar_ember:{eligible:false,ineligible_reason:'surface',grants:[grant]}})]);
+  assert.deepEqual(result.envelope.resetDetails,{eligible:false,ineligible_reason:'surface',grants:[grant]});
+});
+test('preserves in-band reset failure for native cache retention and sanitizes unknown reasons',async()=>{
+  for(const reason of ['unavailable',sensitive]) {
+    const result=await execute([response(bootstrap()),response({status:'active'}),
+      response({cedar_ember:{eligible:false,ineligible_reason:reason,grants:[]}})]);
+    assert.equal(result.envelope.resetDetails.ineligible_reason,reason==='unavailable'?'unavailable':'unknown');
+    assert.equal(JSON.stringify(result.envelope).includes(sensitive),false);
+  }
+});
 
 test('uses the matching non-first organization and exports only display metadata', async () => {
   const id = 'synthetic-org /?%';

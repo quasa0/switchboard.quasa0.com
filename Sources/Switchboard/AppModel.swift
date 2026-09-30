@@ -28,7 +28,8 @@ actor AccountEngine: SubscriptionEngine {
         defer { refreshing = false }
         let installation = try repository.withLock { try repository.prepareUsage(id) }
         do {
-            var usage = try await CLIUsageClient(executable: ClaudeExecutable.find()).fetch(installation: installation)
+            let executable = try ClaudeExecutable.find()
+            var usage = try await CLIUsageClient(executable: executable).fetch(installation: installation)
             let credential = try repository.withLock { () -> OAuthCredential in
                 try repository.collectUsageCredentials(id, from: installation)
                 let (identity, token) = try repository.credential(for: id).validated()
@@ -39,7 +40,8 @@ actor AccountEngine: SubscriptionEngine {
                 return token
             }
             do {
-                usage.claudeResetSnapshot = try await ClaudeResetClient().fetch(credential: credential)
+                usage.claudeResetSnapshot = try await ClaudeResetClient().fetch(
+                    credential: credential, cliVersion: ClaudeExecutable.installedVersion(at: executable))
                 usage.claudeResetReadFailed = false
             } catch {
                 try Task.checkCancellation()

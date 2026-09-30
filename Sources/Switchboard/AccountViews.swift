@@ -413,8 +413,6 @@ private struct ProviderAccountSection: View {
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(Palette.muted)
                 .accessibilityLabel("\(model.accounts.count) saved accounts")
-            Text("Remaining allowance")
-                .font(.system(size: 11)).foregroundStyle(Palette.muted)
             Spacer(minLength: 12)
             if model.provider == .claude {
                 Toggle("Show Fable usage", isOn: $model.showsFableUsage)
@@ -880,17 +878,13 @@ private struct AccountRow: View {
             if isSwitching {
                 ProgressView().controlSize(.mini).frame(width: 12, height: 12)
                 Text("Switching…")
-            } else if isActive {
-                Image(systemName: "checkmark.circle.fill")
-                Text("Active")
             } else {
                 Color.clear.frame(width: 1, height: 12).accessibilityHidden(true)
             }
         }
         .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(isActive ? Palette.green : Palette.ink)
+        .foregroundStyle(Palette.ink)
         .frame(width: 90, height: 28)
-        .background(isActive ? Palette.greenWash.opacity(0.7) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
         .padding(.trailing, 34)
         .help(isActive ? "Used for new \(provider.cliName) sessions" : "Switch \(provider.cliName) to this account")
     }
@@ -1061,23 +1055,30 @@ private struct ClaudeResetSummaryView: View {
             VStack(alignment: .leading, spacing: 7) {
                 Text("Manual resets").font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.muted)
                 if let snapshot = account.claudeResets {
-                    let grants = snapshot.eligible ? snapshot.grants.filter { $0.isAvailable(at: context.date) } : []
-                    let first = grants.sorted { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }.first
-                    if let first {
-                        Text("\(first.title) · \(grants.filter { $0.title == first.title }.reduce(0) { $0 + $1.resetsLeft }) available")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text(first.expiresAt.map { "Expires \(compactDueDate($0))" } ?? "Expiry not reported")
-                            .font(.system(size: 11)).foregroundStyle(Palette.muted)
-                        if !first.usableNow {
-                            Text("Use conditions apply").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                    let grants = snapshot.unexpiredGrants(at: context.date)
+                    if !grants.isEmpty {
+                        ForEach(grants) { grant in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("\(grant.title) · \(grant.resetsLeft) \(snapshot.eligible && grant.isAvailable(at: context.date) ? "available" : "unused")")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text(grant.expiresAt.map { "Expires \(compactDueDate($0))" } ?? "Expiry not reported")
+                                    .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                                if grant.paused {
+                                    Text("Paused").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                                } else if let start = grant.startsAt, start > context.date {
+                                    Text("Starts \(compactDueDate(start))").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                                } else if !snapshot.eligible || !grant.usableNow {
+                                    Text("Use conditions apply").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                                }
+                            }
                         }
-                        let sessionCount = grants.filter { $0.title == "5-hour reset" }.reduce(0) { $0 + $1.resetsLeft }
-                        if first.title != "5-hour reset" {
-                            Text("5-hour reset · \(sessionCount == 0 ? "None" : "\(sessionCount) available")")
-                                .font(.system(size: 11)).foregroundStyle(Palette.muted)
-                        }
-                    } else {
+                    } else if snapshot.confirmsGrantInventory {
                         Text("None available").font(.system(size: 12)).foregroundStyle(Palette.muted)
+                    } else {
+                        Text("Not confirmed").font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        Text("Connect billing to check Claude web resets")
+                            .font(.system(size: 10)).foregroundStyle(Palette.muted)
+                            .help("Claude Code did not report an account-wide reset balance.\(snapshot.ineligibleReason.map { " Provider reason: \($0)." } ?? "")")
                     }
                     if account.claudeResetsReadFailed || context.date.timeIntervalSince(snapshot.checkedAt) > 600 {
                         Text("Saved reset data · Refresh needed").font(.system(size: 10)).foregroundStyle(Palette.warning)
@@ -1186,14 +1187,26 @@ private struct ResetDetailsSheet: View {
                         ForEach(snapshot.grants) { grant in
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(grant.title).font(.system(size: 13, weight: .semibold))
-                                Text("\(grant.resetsLeft) unused · \(!snapshot.eligible ? "Not eligible" : grant.paused ? "Paused" : (grant.expiresAt.map { $0 <= Date() } ?? false) ? "Expired" : grant.usableNow ? "Usable now" : "Use conditions apply")")
+                                let state = (grant.expiresAt.map { $0 <= Date() } ?? false) ? "Expired"
+                                    : grant.resetsLeft == 0 ? "Used"
+                                    : grant.paused ? "Paused"
+                                    : (grant.startsAt.map { $0 > Date() } ?? false) ? "Not started"
+                                    : !snapshot.eligible ? "Unavailable on this Claude surface"
+                                    : grant.usableNow ? "Usable now" : "Use conditions apply"
+                                Text("\(grant.resetsLeft) unused · \(state)")
                                     .font(.system(size: 12)).foregroundStyle(Palette.muted)
                                 Text(grant.expiresAt.map { "Expires \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Expiry not reported")
                                     .font(.system(size: 12, weight: .medium))
                                 Divider()
                             }
                         }
-                        if snapshot.grants.isEmpty { Text("No reset grants reported.") }
+                        if snapshot.grants.isEmpty {
+                            Text(snapshot.confirmsGrantInventory ? "No reset grants reported."
+                                 : "Claude Code did not confirm the reset balance. Connect billing to check Claude's website.")
+                            if let reason = snapshot.ineligibleReason {
+                                Text("Provider reason: \(reason)").font(.system(size: 11)).foregroundStyle(Palette.muted)
+                            }
+                        }
                     }
                 }.frame(maxHeight: 360)
                 Text("Checked \(snapshot.checkedAt.formatted(date: .abbreviated, time: .shortened))")

@@ -245,6 +245,18 @@ struct UIVerificationError: LocalizedError {
         for providerModel in completed.providers { await providerModel.switchAccount(providerModel.accounts[1]) }
         records.append(try await UIPreviewRenderer.render(model: completed, state: .accounts,
             to: output.appendingPathComponent("switch-completed.png")))
+        let restrictedResets = DashboardModel(demo: true)
+        restrictedResets.claude.accounts[0].usage?.claudeResetSnapshot?.eligible = false
+        restrictedResets.claude.accounts[0].usage?.claudeResetSnapshot?.grants[0].usableNow = false
+        restrictedResets.claude.accounts[1].usage?.claudeResetSnapshot?.eligible = false
+        restrictedResets.claude.accounts[1].usage?.claudeResetSnapshot?.ineligibleReason = "surface"
+        try require(restrictedResets.claude.accounts[0].claudeResets?.unexpiredGrants(at: Date()).count == 1 &&
+                    restrictedResets.claude.accounts[1].claudeResets?.confirmsGrantInventory == false,
+                    "Surface eligibility must preserve owned grants and leave an empty ineligible balance unconfirmed.")
+        for dark in [false, true] {
+            records.append(try await UIPreviewRenderer.render(model: restrictedResets, state: .accounts,
+                to: output.appendingPathComponent(dark ? "restricted-resets-dark.png" : "restricted-resets.png"), dark: dark))
+        }
         let compactSwitch = DashboardModel(demo: true, previewState: .switching)
         records.append(try await UIPreviewRenderer.render(model: compactSwitch, state: .switching,
             to: output.appendingPathComponent("switching-minimum-width.png"), width: 620))

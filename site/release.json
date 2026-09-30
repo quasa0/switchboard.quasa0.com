@@ -1,5 +1,5 @@
 {
-  "version": "0.6.0",
+  "version": "0.6.1",
   "minimumMacOS": "14.0",
   "architectures": [
     "arm64",
@@ -9,16 +9,16 @@
   "notarized": false,
   "assets": [
     {
-      "name": "Switchboard-0.6.0-universal.zip",
-      "url": "https://github.com/quasa0/switchboard/releases/download/v0.6.0/Switchboard-0.6.0-universal.zip",
-      "sha256": "3e001a8a75aef83fb14c8536265e1cd4fe0180a16bd741c4f2ab5b05e9496b97",
-      "bytes": 3359226
+      "name": "Switchboard-0.6.1-universal.zip",
+      "url": "https://github.com/quasa0/switchboard/releases/download/v0.6.1/Switchboard-0.6.1-universal.zip",
+      "sha256": "e4530a8e15327fe1ef97309591a4c913261ac93c3afe77510b7ec08260055760",
+      "bytes": 3387008
     },
     {
-      "name": "Switchboard-0.6.0-universal.dmg",
-      "url": "https://github.com/quasa0/switchboard/releases/download/v0.6.0/Switchboard-0.6.0-universal.dmg",
-      "sha256": "1e5bc4e84b2f052235b2c55cdb8306351ca634d03debdd8216f7bdb0acb5b26d",
-      "bytes": 3885436
+      "name": "Switchboard-0.6.1-universal.dmg",
+      "url": "https://github.com/quasa0/switchboard/releases/download/v0.6.1/Switchboard-0.6.1-universal.dmg",
+      "sha256": "0bef3e95b0a6c0f052e7a1c2a1d82a29876acd0ecce5106ab199348c4cbf7d5f",
+      "bytes": 3909623
     }
   ]
 }

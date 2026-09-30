@@ -13,7 +13,7 @@ final class AccountRepositoryTests: RepositoryTestCase {
         XCTAssertEqual(accounts.first(where:{$0.id==a.id})?.claudeBilling?.resetSnapshot,resets)
         XCTAssertEqual(accounts.first(where:{$0.id==a.id})?.claudeBilling?.resetReadFailed,true)
         XCTAssertNil(accounts.first(where:{$0.id==b.id})?.claudeBilling)
-        let empty = try ClaudeResetSnapshot.parse(["eligible":false,"grants":[]])
+        let empty = try ClaudeResetSnapshot.parse(["eligible":true,"grants":[]])
         try repository.setClaudeBilling(a.id,billing:ClaudeBillingSnapshot(status:"active",resetSnapshot:empty,resetReadFailed:false))
         XCTAssertEqual(try repository.accounts().first(where:{$0.id==a.id})?.claudeBilling?.resetSnapshot,empty)
     }

@@ -59,6 +59,26 @@ public final class LoginSession {
 }
 
 public enum ClaudeExecutable {
+    /// Reads public installation metadata, without starting a CLI or opening an account store.
+    public static func installedVersion(at executable: URL) -> String? {
+        let resolved = executable.resolvingSymlinksInPath()
+        if resolved.deletingLastPathComponent().lastPathComponent == "versions",
+           validVersion(resolved.lastPathComponent) { return resolved.lastPathComponent }
+        let package = resolved.deletingLastPathComponent().appendingPathComponent("package.json")
+        guard let size = try? package.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 65_536,
+              let data = try? Data(contentsOf: package), data.count <= 65_536,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["name"] as? String == "@anthropic-ai/claude-code",
+              let version = object["version"] as? String, validVersion(version) else { return nil }
+        return version
+    }
+
+    static func validVersion(_ version: String) -> Bool {
+        version.utf8.count <= 64 && !version.contains(where: { $0.isNewline }) &&
+        version.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$"#,
+                                               options: .regularExpression) != nil
+    }
+
     public static func find(home: URL = FileManager.default.homeDirectoryForCurrentUser) throws -> URL {
         var paths = [home.appendingPathComponent(".local/bin/claude").path, "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
         paths += (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/claude" }

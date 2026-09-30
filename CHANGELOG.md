@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- Identify the installed Claude Code version on reset reads. Keep surface eligibility separate from owned grants; an empty ineligible response does not establish zero or erase confirmed grants. Retain saved grants when the provider returns an in-band unavailable status.
+- Show every unused, unexpired Claude reset grant with its expiry and use conditions.
+- Remove the large Active badge and Remaining allowance header text. Preserve the active row highlight, accessibility state, and layout during switching.
+
 ## 0.6.0
 
 - Check for desktop updates after startup and every four minutes. Download on click, verify the archive signature, and confirm before installing and restarting. Match T3 Code’s interaction with Sparkle’s native installer.

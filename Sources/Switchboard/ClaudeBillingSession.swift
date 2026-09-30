@@ -233,7 +233,10 @@ import SwitchboardCore
         const resets = usage?.cedar_ember;
         if (resets && typeof resets.eligible === 'boolean' && Array.isArray(resets.grants)) {
           const fields = ['id','resets_left','clears','starts_at','ends_at','paused','usable_now'];
-          resetDetails = {eligible:resets.eligible, grants:resets.grants.map(grant =>
+          const reasons = ['config_off','tier','seat','mobile','surface','cli_version','no_grant','tenure','other_experiment','unavailable','unknown'];
+          resetDetails = {eligible:resets.eligible,
+            ...(typeof resets.ineligible_reason === 'string' ? {ineligible_reason:reasons.includes(resets.ineligible_reason) ? resets.ineligible_reason : 'unknown'} : {}),
+            grants:resets.grants.map(grant =>
             Object.fromEntries(fields.filter(k => k in grant).map(k => [k,grant[k]])))};
         }
       } catch { /* Keep billing independent of missing or failed reset data. */ }
