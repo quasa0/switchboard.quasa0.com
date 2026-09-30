@@ -22,7 +22,15 @@ import AppKit
                         fputs("FAIL: \(error)\n", stderr)
                         exit(1)
                     }
-                    if launchOptions.runsUISmoke {
+                    if ProcessInfo.processInfo.arguments.contains("--update-smoke") {
+                        guard !delegate.didStartAutomation else { return }
+                        delegate.didStartAutomation = true
+                        do { try await UpdateSmokeCheck.run(model: model, arguments: ProcessInfo.processInfo.arguments) }
+                        catch { await model.shutdown(); fputs("FAIL: updater fixture: \(error.localizedDescription)\n", stderr); exit(1) }
+                    } else if let marker = UpdateSmokeCheck.fixtureMarker {
+                        try? Data((Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown").utf8).write(to: marker)
+                        NSApp.terminate(nil)
+                    } else if launchOptions.runsUISmoke {
                         guard !delegate.didStartAutomation else { return }
                         delegate.didStartAutomation = true
                         do {
@@ -71,7 +79,9 @@ import AppKit
                             exit(1)
                         }
                     } else if !model.isDemo {
+                        model.updates.start()
                         await model.refresh()
+                        model.startAutoRefresh()
                     }
                 }
         }
@@ -79,9 +89,19 @@ import AppKit
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            DesktopUpdateCommands(updates: model.updates)
         }
         MenuBarExtra("Switchboard", systemImage: "person.2.crop.square.stack") {
             MenuContentView(model: model)
+        }
+    }
+}
+
+private struct DesktopUpdateCommands: Commands {
+    @ObservedObject var updates: DesktopUpdates
+    var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { updates.check() }.disabled(!updates.canCheck)
         }
     }
 }

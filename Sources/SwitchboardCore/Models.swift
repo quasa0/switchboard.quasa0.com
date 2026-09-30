@@ -1,7 +1,7 @@
 import Foundation
 
 public extension SubscriptionProvider {
-    /// Labels the plan relative to this provider's standard paid allowance.
+    /// Formats provider plan names; only verified Claude tiers carry a multiplier.
     /// Accepts provider identifiers and display labels so cached metadata needs no credential refresh.
     func planLabel(_ rawPlan: String) -> String {
         let trimmed = rawPlan.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -18,12 +18,19 @@ public extension SubscriptionProvider {
             default: break
             }
         case .chatGPT:
-            // Codex's ProLite/Pro identifiers distinguish the two consumer Pro tiers.
-            // Public tier allowances: https://learn.chatgpt.com/docs/pricing
+            // Plan identifiers do not establish a current allowance multiplier.
+            // https://learn.chatgpt.com/docs/pricing
             switch key {
-            case "plus", "plus1x": return "Plus · 1×"
-            case "prolite", "pro5x": return "Pro · 5×"
-            case "pro", "pro20x": return "Pro · 20×"
+            case "plus": return "Plus"
+            case "prolite": return "Pro Lite"
+            case "pro": return "Pro"
+            // TEMP-COMPAT 2026-09-30: normalize inferred tier labels saved by Switchboard <= 0.5.2;
+            // these account files store formatted labels rather than provider IDs. Remove after a
+            // metadata schema migration requires raw provider IDs for every saved account. Delete
+            // these plus1x/pro5x/pro10x/pro20x cases and the cached-label regression below.
+            case "plus1x": return "Plus"
+            case "pro5x": return "Pro Lite"
+            case "pro10x", "pro20x": return "Pro"
             case "chatgpt": return "ChatGPT"
             default: break
             }
@@ -88,15 +95,39 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     public var modelScoped: [NamedUsageWindow]
     /// Provider-reported manual reset credits. Nil means the provider did not report them.
     public var manualResets: ManualResetSummary?
+    /// Credit balances retain their bucket identity. Nil means no credit data was reported.
+    public var creditBalances: [UsageCreditBalance]?
+    public var reportedPlan: String?
+    public var claudeResetSnapshot: ClaudeResetSnapshot?
+    public var claudeResetReadFailed: Bool?
     public init(fiveHour: UsageWindow? = nil, sevenDay: UsageWindow? = nil,
                 sevenDaySonnet: UsageWindow? = nil, sevenDayOpus: UsageWindow? = nil,
                 fetchedAt: Date = Date(), modelScoped: [NamedUsageWindow] = [],
-                manualResets: ManualResetSummary? = nil) {
+                manualResets: ManualResetSummary? = nil, creditBalances: [UsageCreditBalance]? = nil,
+                reportedPlan: String? = nil, claudeResetSnapshot: ClaudeResetSnapshot? = nil,
+                claudeResetReadFailed: Bool? = nil) {
         self.fiveHour = fiveHour; self.sevenDay = sevenDay
         self.sevenDaySonnet = sevenDaySonnet; self.sevenDayOpus = sevenDayOpus
         self.fetchedAt = fetchedAt
         self.modelScoped = modelScoped
         self.manualResets = manualResets
+        self.creditBalances = creditBalances
+        self.reportedPlan = reportedPlan
+        self.claudeResetSnapshot = claudeResetSnapshot
+        self.claudeResetReadFailed = claudeResetReadFailed
+    }
+}
+
+public struct UsageCreditBalance: Codable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var hasCredits: Bool
+    public var unlimited: Bool
+    /// Provider decimal string, not a currency amount or an inferred grant.
+    public var balance: String?
+    public init(id: String, name: String, hasCredits: Bool, unlimited: Bool, balance: String?) {
+        self.id = id; self.name = name; self.hasCredits = hasCredits
+        self.unlimited = unlimited; self.balance = balance
     }
 }
 

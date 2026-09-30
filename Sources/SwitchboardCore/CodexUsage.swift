@@ -54,6 +54,18 @@ public struct CodexUsageClient: Sendable {
             guard let bucket = buckets[key] else { continue }
             let name = nonempty(bucket.limitName) ?? nonempty(bucket.normalModelSlug)
                 ?? (key == "codex" ? "Codex" : key)
+            if key == "codex" { snapshot.reportedPlan = nonempty(bucket.planType) }
+            if let credits = bucket.credits {
+                if let balance = credits.balance {
+                    guard balance.count <= 100,
+                          balance.range(of: #"^[0-9]+(?:\.[0-9]+)?$"#, options: .regularExpression) != nil else {
+                        throw SwitchboardError.message("Codex returned an invalid credit balance. Refresh again.")
+                    }
+                }
+                if snapshot.creditBalances == nil { snapshot.creditBalances = [] }
+                snapshot.creditBalances?.append(UsageCreditBalance(id: key, name: name,
+                    hasCredits: credits.hasCredits, unlimited: credits.unlimited, balance: credits.balance))
+            }
             for (position, value) in [("Primary", bucket.primary), ("Secondary", bucket.secondary)] {
                 guard let value else { continue }
                 let window = try value.window()
@@ -68,7 +80,7 @@ public struct CodexUsageClient: Sendable {
                 }
             }
         }
-        guard snapshot.fiveHour != nil || snapshot.sevenDay != nil || !snapshot.modelScoped.isEmpty || snapshot.manualResets != nil else {
+        guard snapshot.fiveHour != nil || snapshot.sevenDay != nil || !snapshot.modelScoped.isEmpty || snapshot.manualResets != nil || snapshot.creditBalances != nil else {
             throw SwitchboardError.message("Codex recognized this subscription but did not return usage windows. Refresh again.")
         }
         return snapshot
@@ -126,6 +138,13 @@ private struct CodexUsageReply: Decodable {
         var normalModelSlug: String?
         var primary: Window?
         var secondary: Window?
+        var planType: String?
+        var credits: Credits?
+    }
+    struct Credits: Decodable {
+        var hasCredits: Bool
+        var unlimited: Bool
+        var balance: String?
     }
     struct Window: Decodable {
         var usedPercent: Double
@@ -288,15 +307,17 @@ private final class CodexUsageProcess: @unchecked Sendable {
                           frame["id"] as? String == expectedID else { continue }
                     if let errorObject = frame["error"], !(errorObject is NSNull) {
                         let failure = try JSONDecoder().decode(CodexUsageFailure.self, from: jsonData(errorObject))
-                        // The account-only rate-limit endpoint does not perform the turn
-                        // runner's 401 recovery. Ask the CLI to refresh once, retaining its
-                        // rotated auth file even if the subsequent usage read fails.
-                        if expectedID == usageID, failure.httpStatus == 401 {
+                        // Either account discovery or usage can reject the access token.
+                        // Ask the CLI to refresh once across both stages, retaining its
+                        // rotated auth file even if the subsequent read fails.
+                        if [accountID, usageID].contains(expectedID), failure.httpStatus == 401 {
                             expectedID = refreshID
                             try send(method: "account/read", id: refreshID, params: ["refreshToken": true],
                                      to: input.fileHandleForWriting)
                             continue
                         }
+                        if failure.httpStatus == 401 { throw CodexAuthenticationError.unauthorized }
+                        if failure.isAuthenticationFailure { throw CodexAuthenticationError.rejected }
                         let stage = expectedID == initializeID ? "initialize"
                             : ([accountID, refreshID].contains(expectedID) ? "account/read" : "account/rateLimits/read")
                         throw failure.displayError(stage: stage)
@@ -311,7 +332,7 @@ private final class CodexUsageProcess: @unchecked Sendable {
                                  to: input.fileHandleForWriting)
                     } else if expectedID == accountID || expectedID == refreshID {
                         guard let account = result["account"] as? [String: Any], account["type"] as? String == "chatgpt" else {
-                            throw SwitchboardError.message("This login has no ChatGPT subscription usage. Sign in to Codex with ChatGPT.")
+                            throw CodexAuthenticationError.noWorkingCopy
                         }
                         expectedID = expectedID == refreshID ? retryUsageID : usageID
                         try send(method: "account/rateLimits/read", id: expectedID, params: ["excludeResetCreditDetails": false],

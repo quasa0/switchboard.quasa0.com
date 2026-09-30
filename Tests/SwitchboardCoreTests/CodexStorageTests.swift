@@ -20,7 +20,8 @@ class CodexTestCase: XCTestCase {
         let auth: [String: Any] = ["chatgpt_user_id": "user-\(user)", "chatgpt_account_id": workspace ?? "workspace-\(user)", "chatgpt_plan_type": plan]
         let claims: [String: Any] = ["email": "\(user)@example.test", "sub": "user-\(user)",
             "https://api.openai.com/auth": auth.merging(authClaims, uniquingKeysWith: { _, new in new })]
-        let payload = try JSONSerialization.data(withJSONObject: claims.merging(jwtClaims, uniquingKeysWith: { _, new in new })).base64EncodedString()
+        // Stable token bytes let repository tests compare newly constructed copies.
+        let payload = try JSONSerialization.data(withJSONObject: claims.merging(jwtClaims, uniquingKeysWith: { _, new in new }), options: [.sortedKeys]).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         let object: [String: Any] = ["auth_mode": "chatgpt", "OPENAI_API_KEY": NSNull(), "last_refresh": refreshed,
             "tokens": ["id_token": "header.\(payload).signature", "access_token": "synthetic-\(user)-\(token)", "refresh_token": "synthetic-refresh-\(user)-\(token)", "account_id": workspace ?? "workspace-\(user)", "future_token_field": true],
@@ -109,13 +110,13 @@ final class CodexStorageTests: CodexTestCase {
         let originalConfig = try Data(contentsOf: installation.configFile)
         try repository.live.apply(second, ifUnchangedFrom: first)
         XCTAssertEqual(try repository.live.snapshot(), second)
-        XCTAssertEqual(try second.validated(), CurrentLogin(email: "b@example.test", accountUUID: "user-b", organizationUUID: "workspace-b", plan: "Pro · 20×"))
+        XCTAssertEqual(try second.validated(), CurrentLogin(email: "b@example.test", accountUUID: "user-b", organizationUUID: "workspace-b", plan: "Pro"))
         XCTAssertEqual(try Data(contentsOf: installation.configFile), originalConfig)
         let attributes = try FileManager.default.attributesOfItem(atPath: installation.authFile.path)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
     func testTokenPlanIdentityUsesProviderTiersWithoutChangingAuthPayload() throws {
-        for (rawPlan, expected) in [("prolite", "Pro · 5×"), ("pro", "Pro · 20×"), ("plus", "Plus · 1×"),
+        for (rawPlan, expected) in [("prolite", "Pro Lite"), ("pro", "Pro"), ("plus", "Plus"),
                                     ("future_custom", "Future Custom"), ("business", "Business")] {
             let credential = try snapshot(plan: rawPlan)
             let original = credential.authJSON

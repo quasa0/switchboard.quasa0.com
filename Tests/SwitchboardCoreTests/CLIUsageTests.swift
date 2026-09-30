@@ -129,7 +129,7 @@ final class CLIUsageTests: XCTestCase {
         let fixture = try Fixture(script: Self.waitingScript)
         defer { fixture.remove() }
         do {
-            _ = try await CLIUsageClient(executable: fixture.executable, timeout: 0.3).fetch(installation: fixture.installation)
+            _ = try await CLIUsageClient(executable: fixture.executable, timeout: 2).fetch(installation: fixture.installation)
             XCTFail("Expected timeout")
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("in time"))
@@ -141,7 +141,8 @@ final class CLIUsageTests: XCTestCase {
         let fixture = try Fixture(script: Self.waitingScript)
         defer { fixture.remove() }
         let task = Task { try await CLIUsageClient(executable: fixture.executable).fetch(installation: fixture.installation) }
-        for _ in 0..<100 {
+        // Wait for Python's readiness marker before testing cancellation of a running child.
+        for _ in 0..<500 {
             if FileManager.default.fileExists(atPath: fixture.pidFile.path) { break }
             try await Task.sleep(nanoseconds: 10_000_000)
         }

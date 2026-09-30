@@ -7,8 +7,11 @@ import SwitchboardCore
 @MainActor final class DashboardModel: ObservableObject {
     let claude: AppModel
     let chatGPT: AppModel
+    let updates: DesktopUpdates
     private var subscriptions = Set<AnyCancellable>()
     private var refreshTask: Task<Void, Never>?
+    private var autoRefreshTask: Task<Void, Never>?
+    @Published private(set) var nextRefreshAt: Date?
     private var stopping = false
     @Published private var refreshingAll = false
 
@@ -16,6 +19,7 @@ import SwitchboardCore
          previewProvider: SubscriptionProvider? = nil) {
         let preview = demo || empty || previewState != nil || previewProvider != nil
         let state = previewState ?? (empty ? .empty : .accounts)
+        updates = DesktopUpdates(demo: preview)
         claude = AppModel(demo: preview,
             previewState: preview ? (previewProvider == nil || previewProvider == .claude ? state : .accounts) : nil,
             provider: .claude)
@@ -39,6 +43,27 @@ import SwitchboardCore
     var loginInProgress: Bool { providers.contains(where: \.loginInProgress) }
     var isBlocked: Bool { isBusy || isLoading || isRefreshing || loginInProgress }
 
+    func startAutoRefresh() {
+        guard !isDemo, !stopping, autoRefreshTask == nil else { return }
+        nextRefreshAt = Date().addingTimeInterval(300)
+        autoRefreshTask = Task { [weak self] in
+            let clock = ContinuousClock()
+            var nextTick = clock.now.advanced(by: .seconds(300))
+            while !Task.isCancelled {
+                do { try await clock.sleep(until: nextTick) }
+                catch { return }
+                guard let self, !self.stopping else { return }
+                // A sign-in or switch owns the login until it finishes. Skip this tick.
+                if !self.isBlocked { await self.refresh() }
+                nextTick = nextTick.advanced(by: .seconds(300))
+                // After sleep or an unusually long check, resume without a catch-up burst.
+                if nextTick <= clock.now { nextTick = clock.now.advanced(by: .seconds(300)) }
+                let delay = clock.now.duration(to: nextTick).components
+                self.nextRefreshAt = Date().addingTimeInterval(Double(delay.seconds) + Double(delay.attoseconds) / 1e18)
+            }
+        }
+    }
+
     func refresh() async {
         guard !stopping, !isBusy, !isRefreshing, !loginInProgress else { return }
         refreshingAll = true
@@ -57,6 +82,8 @@ import SwitchboardCore
 
     func shutdown() async {
         stopping = true
+        updates.stop()
+        autoRefreshTask?.cancel()
         refreshTask?.cancel()
         // Cancel the child models before awaiting the dashboard task: their
         // usage tasks own the CLI processes and must be allowed to reap them.
@@ -64,5 +91,8 @@ import SwitchboardCore
         async let chatGPTShutdown: Void = chatGPT.shutdown()
         _ = await (claudeShutdown, chatGPTShutdown)
         await refreshTask?.value
+        await autoRefreshTask?.value
+        autoRefreshTask = nil
+        nextRefreshAt = nil
     }
 }

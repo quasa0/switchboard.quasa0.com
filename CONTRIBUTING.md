@@ -8,7 +8,7 @@ Small, focused changes are easiest to review. For new provider support or change
 | --- | --- |
 | `Sources/Switchboard` | SwiftUI app, dashboard model, and provider coordination |
 | `Sources/SwitchboardCore` | Account storage, switching, CLI protocols, and usage models |
-| `Tests/SwitchboardCoreTests` | Synthetic protocol, persistence, and recovery tests |
+| `Tests/SwitchboardCoreTests` | Synthetic protocol, cookie-decryption, persistence, and recovery tests |
 | `scripts` | Build, packaging, and verification tools |
 | `site` | Static landing page, agent instructions, and release manifest |
 | `docs` | User guide, architecture, and release procedure |
@@ -18,6 +18,8 @@ Small, focused changes are easiest to review. For new provider support or change
 Use macOS 14+, Swift 5.10+, Node 20+, and Python 3. Run `swift test`, `node scripts/test-billing-reader.mjs`, and `python3 scripts/check-site.py`. Changes to the native UI also need `SWITCHBOARD_SIGNING_IDENTITY=- ./scripts/build.sh` and `./scripts/ui-smoke.sh dist/Switchboard.app` in a logged-in macOS desktop session.
 
 Never test account switching against someone’s actual login. Use injected stores and temporary fixture files. Keep fixture addresses under reserved `.example` or `.test` domains. UI preview flags construct synthetic models before account engines can start.
+
+Updater changes also need `SWITCHBOARD_SPARKLE_TOOLS=$(bash scripts/sparkle-tools.sh) python3 scripts/test-updater.py`. It exercises signed installation and relaunch on isolated demo bundles through a loopback feed, without real account credentials.
 
 Use SwiftUI for UI changes. Preserve native keyboard behavior and accessibility labels. Keep absent, stale, failed, and zero usage distinct. Do not infer billing dates from quota resets or token expiry. A successful switch must preserve unrelated settings and recover from interrupted writes.
 

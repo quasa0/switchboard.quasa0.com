@@ -9,4 +9,5 @@ SWITCHBOARD_DEPLOYMENT=$(printf '%s' "$SWITCHBOARD_DEPLOY_RESULT" | python3 -c '
 # alias, then smoke the public installation path without weakening protection.
 vercel inspect "$SWITCHBOARD_DEPLOYMENT" --format json | python3 -c 'import json,sys; result=json.load(sys.stdin); assert result["readyState"] == "READY"; assert "switchboard.quasa0.com" in result["aliases"]'
 python3 scripts/smoke-site.py https://switchboard.quasa0.com
+if [ "$(uname -s)" = Darwin ]; then python3 scripts/test-published-updater.py; fi
 printf 'Verified: %s\n' "$SWITCHBOARD_DEPLOYMENT"

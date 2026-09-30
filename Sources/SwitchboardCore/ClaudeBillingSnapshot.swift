@@ -13,11 +13,14 @@ public struct ClaudeBillingSnapshot: Codable, Equatable, Sendable {
     /// Gift coverage includes this complete UTC calendar day.
     public var giftPaidThrough: String?
     public var paymentPausedUntil: Date?
+    public var resetSnapshot: ClaudeResetSnapshot?
+    public var resetReadFailed: Bool?
 
     public init(checkedAt: Date = Date(), status: String? = nil, nextChargeAt: Date? = nil,
                 nextChargeDate: String? = nil, planEndingAt: Date? = nil,
                 planEndingDate: String? = nil, giftPaidThrough: String? = nil,
-                paymentPausedUntil: Date? = nil) {
+                paymentPausedUntil: Date? = nil, resetSnapshot: ClaudeResetSnapshot? = nil,
+                resetReadFailed: Bool? = nil) {
         self.checkedAt = checkedAt
         self.status = status
         self.nextChargeAt = nextChargeAt
@@ -26,6 +29,8 @@ public struct ClaudeBillingSnapshot: Codable, Equatable, Sendable {
         self.planEndingDate = planEndingDate
         self.giftPaidThrough = giftPaidThrough
         self.paymentPausedUntil = paymentPausedUntil
+        self.resetSnapshot = resetSnapshot
+        self.resetReadFailed = resetReadFailed
     }
 
     /// Validates the web-to-native identity boundary before reading any billing fields.
@@ -38,7 +43,8 @@ public struct ClaudeBillingSnapshot: Codable, Equatable, Sendable {
               expectedAccountUUID == expectedAccountUUID.trimmingCharacters(in: .whitespacesAndNewlines),
               expectedOrganizationUUID == expectedOrganizationUUID.trimmingCharacters(in: .whitespacesAndNewlines),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              Set(object.keys) == Set(["accountUUID", "organizationUUID", "details"]),
+              Set(["accountUUID", "organizationUUID", "details"]).isSubset(of: Set(object.keys)),
+              Set(object.keys).isSubset(of: Set(["accountUUID", "organizationUUID", "details", "resetDetails"])),
               let accountUUID = object["accountUUID"] as? String,
               let organizationUUID = object["organizationUUID"] as? String else { throw invalidResponse }
         guard accountUUID == expectedAccountUUID, organizationUUID == expectedOrganizationUUID else {
@@ -46,7 +52,15 @@ public struct ClaudeBillingSnapshot: Codable, Equatable, Sendable {
         }
         guard let details = object["details"] as? [String: Any],
               let detailsData = try? JSONSerialization.data(withJSONObject: details) else { throw invalidResponse }
-        return try parse(detailsData, checkedAt: checkedAt)
+        var snapshot = try parse(detailsData, checkedAt: checkedAt)
+        if let raw = object["resetDetails"] {
+            if let resets = raw as? [String: Any],
+               let parsed = try? ClaudeResetSnapshot.parse(resets, checkedAt: checkedAt) {
+                snapshot.resetSnapshot = parsed
+                snapshot.resetReadFailed = false
+            } else { snapshot.resetReadFailed = true }
+        }
+        return snapshot
     }
 
     /// Reads the first-party `/api/organizations/{uuid}/subscription_details` object.

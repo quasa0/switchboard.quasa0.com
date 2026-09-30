@@ -4,6 +4,7 @@ import hashlib
 import json
 import pathlib
 import re
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit
 
@@ -45,6 +46,18 @@ for css_asset in re.findall(r"url\(['\"]?(/[^)'\"]+)", (SITE / 'style.css').read
     assert (SITE / css_asset.lstrip('/')).is_file(), f'Missing CSS asset: {css_asset}'
 version = re.search(r'^SWITCHBOARD_VERSION=([0-9.]+)$', (ROOT / 'scripts/version.sh').read_text(), re.M)[1]
 manifest = json.loads((SITE / 'release.json').read_text())
+feed = ET.parse(SITE / 'appcast.xml')
+enclosure = feed.find('./channel/item/enclosure')
+sparkle = '{http://www.andymatuschak.org/xml-namespaces/sparkle}'
+assert enclosure is not None
+assert enclosure.get(sparkle + 'shortVersionString') == version
+build = re.search(r'^SWITCHBOARD_BUILD=([0-9]+)$', (ROOT / 'scripts/version.sh').read_text(), re.M)[1]
+assert enclosure.get(sparkle + 'version') == build
+assert re.fullmatch(r'[A-Za-z0-9+/]{86}==', enclosure.get(sparkle + 'edSignature', ''))
+assert b'Sparkle' in (SITE / 'appcast.xml').read_bytes(), 'Signed feed metadata missing'
+zip_asset = next(a for a in manifest['assets'] if a['name'].endswith('.zip'))
+assert enclosure.get('url') == zip_asset['url']
+assert int(enclosure.get('length')) == zip_asset['bytes']
 assert manifest['version'] == version
 assert manifest['minimumMacOS'] == '14.0'
 assert set(manifest['architectures']) == {'arm64', 'x86_64'}

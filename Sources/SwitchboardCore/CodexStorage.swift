@@ -155,4 +155,31 @@ public final class CodexLoginStore {
         }
         try privateWrite(target.authJSON, to: installation.authFile)
     }
+
+    /// Only app-owned usage profiles can repair malformed bytes. Live auth always fails closed.
+    func applyUsageCopy(_ target: CodexCredentialSnapshot) throws {
+        guard installation.configurationEnvironment["HOME"] != nil else {
+            throw SwitchboardError.message("Cannot repair a shared Codex login through a usage profile.")
+        }
+        try installation.requireFileStorage()
+        _ = try target.validated()
+        var attributes = stat()
+        if lstat(installation.authFile.path, &attributes) != 0 {
+            guard errno == ENOENT else { throw SwitchboardError.message("Cannot read the saved usage profile.") }
+            try apply(target)
+            return
+        }
+        guard attributes.st_mode & S_IFMT == S_IFREG, attributes.st_size <= 2_097_152 else {
+            throw SwitchboardError.message("The saved usage login must be a regular file. No login was changed.")
+        }
+        let before = try Data(contentsOf: installation.authFile)
+        if (try? CodexCredentialSnapshot(authJSON: before).validated()) != nil {
+            try apply(target, ifUnchangedFrom: CodexCredentialSnapshot(authJSON: before))
+        } else {
+            guard try Data(contentsOf: installation.authFile) == before else {
+                throw SwitchboardError.message("The saved usage profile changed. Refresh again.")
+            }
+            try privateWrite(target.authJSON, to: installation.authFile)
+        }
+    }
 }

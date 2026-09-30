@@ -31,13 +31,13 @@ struct UILaunchOptions {
         }
 
         let uiOnly = arguments.contains {
-            $0.hasPrefix("--demo") || $0.hasPrefix("--render-preview") ||
+            $0.hasPrefix("--demo") || $0.hasPrefix("--update-smoke") || $0.hasPrefix("--render-preview") ||
             $0.hasPrefix("--preview-") || $0.hasPrefix("--ui-smoke-test") ||
             $0 == "--empty" || $0 == "--dark" || $0 == "--light"
         }
         // Parse all UI modes before DashboardModel can construct either account engine. Combining a
         // UI flag with the credential smoke flag still selects the UI-only path.
-        requiresDemo = uiOnly || arguments.contains("--smoke-test") || arguments.contains("--check-quit")
+        requiresDemo = uiOnly || UpdateSmokeCheck.fixtureMarker != nil || arguments.contains("--smoke-test") || arguments.contains("--check-quit")
         runsCredentialSmoke = arguments.contains("--smoke-test") && !uiOnly
         runsUISmoke = arguments.contains("--ui-smoke-test")
         checksQuit = arguments.contains("--check-quit")
@@ -108,7 +108,7 @@ struct UISmokeReport: Codable {
     }
 }
 
-private struct UIVerificationError: LocalizedError {
+struct UIVerificationError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
 }
@@ -158,14 +158,27 @@ private struct UIVerificationError: LocalizedError {
         try require(model.isCredentialFreePreview, "UI smoke must have no account engines.")
         try checkSafeLaunchFlags()
         try checkBillingDatePresentation()
+        try await checkBillingPopup()
         let fixture = DashboardModel(demo: true)
         try require(fixture.isCredentialFreePreview && fixture.accountCount == 4,
                     "Both providers' synthetic accounts were not initialized together.")
         try require(fixture.providers.map(\.provider) == [.claude, .chatGPT] &&
                     fixture.claude.activeID != nil && fixture.chatGPT.activeID != nil,
                     "Both independent active accounts must exist on the same dashboard.")
-        try require(fixture.chatGPT.accounts.map { SubscriptionProvider.chatGPT.planLabel($0.plan) } == ["Pro · 20×", "Pro · 5×"],
-                    "ChatGPT preview tiers must distinguish the 20× and 5× Pro allowances.")
+        try require(fixture.chatGPT.accounts.map { SubscriptionProvider.chatGPT.planLabel($0.plan) } == ["Pro", "Pro Lite"],
+                    "ChatGPT preview tiers must distinguish the reported Pro and Pro Lite identifiers.")
+        try require(fixture.chatGPT.accounts[0].usage?.creditBalances?.first?.balance == "12500" &&
+                    fixture.chatGPT.accounts[1].usage?.creditBalances?.first?.balance == "0",
+                    "Usage credits must remain separate from manual reset counts.")
+        fixture.startAutoRefresh()
+        try require(fixture.nextRefreshAt == nil, "Preview must never start background usage polling.")
+        try require(!fixture.claude.showsFableUsage, "Fable usage must start hidden in a credential-free preview.")
+        let hiddenFable = accountUsageMetrics(fixture.claude.accounts[0].usage, provider: .claude)
+        try require(hiddenFable.map(\.id) == ["weekly", "five-hour"],
+                    "Claude must show weekly then five-hour limits with Fable hidden.")
+        let visibleFable = accountUsageMetrics(fixture.claude.accounts[0].usage, provider: .claude, showsFable: true)
+        try require(Array(visibleFable.prefix(2).map(\.id)) == ["weekly", "five-hour"] && visibleFable[2].isFeatured,
+                    "Enabling Fable must put it third without changing general-limit order.")
         try require(fixture.claude.accounts.allSatisfy { $0.usage?.manualResets == nil } &&
                     fixture.chatGPT.accounts[0].usage?.manualResets?.availableCount == 3 &&
                     fixture.chatGPT.accounts[0].usage?.manualResets?.credits?.count == 3 &&
@@ -219,6 +232,22 @@ private struct UIVerificationError: LocalizedError {
                 to: output.appendingPathComponent("\(name).png"), width: width, dark: dark))
             try require(sample.isCredentialFreePreview, "A render fixture acquired live account access.")
         }
+        let fable = DashboardModel(demo: true)
+        let preservedUsage = fable.claude.accounts.map(\.usage)
+        fable.claude.showsFableUsage = true
+        try require(fable.claude.accounts.map(\.usage) == preservedUsage && !fable.chatGPT.showsFableUsage,
+                    "The Fable checkbox must change display only and leave the other provider unchanged.")
+        for dark in [false, true] {
+            records.append(try await UIPreviewRenderer.render(model: fable, state: .accounts,
+                to: output.appendingPathComponent(dark ? "fable-enabled-dark.png" : "fable-enabled.png"), dark: dark))
+        }
+        let completed = DashboardModel(demo: true)
+        for providerModel in completed.providers { await providerModel.switchAccount(providerModel.accounts[1]) }
+        records.append(try await UIPreviewRenderer.render(model: completed, state: .accounts,
+            to: output.appendingPathComponent("switch-completed.png")))
+        let compactSwitch = DashboardModel(demo: true, previewState: .switching)
+        records.append(try await UIPreviewRenderer.render(model: compactSwitch, state: .switching,
+            to: output.appendingPathComponent("switching-minimum-width.png"), width: 620))
         let partialFailure = DashboardModel(demo: true, previewState: .error, previewProvider: .chatGPT)
         try require(partialFailure.claude.usageErrors.isEmpty && !partialFailure.chatGPT.usageErrors.isEmpty,
                     "A ChatGPT fixture error contaminated the Claude accounts.")
@@ -303,6 +332,14 @@ private struct UIVerificationError: LocalizedError {
         records.append(try await UIPreviewRenderer.render(model: automaticBilling, state: .accounts,
             to: output.appendingPathComponent("automatic-billing.png"), dark: true))
 
+        for status: DesktopUpdateState.Status in [.available, .downloading, .ready, .error] {
+            let dashboard = DashboardModel(demo: true)
+            var state = DesktopUpdateState(status: status)
+            state.version = "0.6.0"; state.progress = status == .downloading ? 42 : nil
+            dashboard.updates.setPreviewState(state)
+            records.append(try await UIPreviewRenderer.render(model: dashboard, state: .accounts,
+                to: output.appendingPathComponent("update-\(status.rawValue).png"), dark: true))
+        }
         return UISmokeReport(credentialAccess: false,
             assertions: ["Every UI flag selects demo before model initialization", "No account engines in preview dashboards",
                          "Both providers and active accounts coexist", "Each provider switch updates only its own identity",
@@ -370,6 +407,38 @@ private struct UIVerificationError: LocalizedError {
         try require(!selected.loginInProgress && selected.isCredentialFreePreview,
                     "Preview sign-in attempted to start a real login.")
         try siblingUnchanged()
+    }
+
+    private static func checkBillingPopup() async throws {
+        // Only inline HTML in an ephemeral store. No network, accounts, cookies, or Keychain.
+        let account = SavedAccount(label: "Popup fixture", email: "popup@synthetic.example",
+                                   accountUUID: "synthetic-popup", organizationUUID: "synthetic-org", plan: "Pro")
+        let session = ClaudeBillingSession(account: account, ephemeral: true)
+        defer { session.stop() }
+        guard let parent = session.webView else { throw UIVerificationError(message: "Popup fixture was not created.") }
+        parent.loadHTMLString("<html><head><title>synthetic-opener</title></head><body>Sign-in fixture</body></html>", baseURL: nil)
+        for _ in 0..<100 {
+            if !parent.isLoading, parent.url != nil { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        _ = try await parent.evaluateJavaScript("window.open('about:blank'); true")
+        for _ in 0..<100 {
+            if let popup = session.popupWebView, !popup.isLoading { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        guard let popup = session.popupWebView else { throw UIVerificationError(message: "Sign-in popup replaced its parent.") }
+        try require(popup !== parent && popup.configuration.websiteDataStore === parent.configuration.websiteDataStore,
+                    "Sign-in popup must preserve its parent and isolated data store.")
+        let title = try await popup.evaluateJavaScript("window.opener.document.title") as? String
+        try require(title == "synthetic-opener", "Sign-in popup lost window.opener.")
+        _ = try await popup.evaluateJavaScript("window.close(); true")
+        for _ in 0..<100 {
+            if session.popupWebView == nil { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try require(session.popupWebView == nil, "Sign-in popup did not close after completion.")
+        let retained = try await parent.evaluateJavaScript("document.title") as? String
+        try require(retained == "synthetic-opener", "Closing sign-in popup changed its parent page.")
     }
 
     private static func checkBillingDatePresentation() throws {
@@ -461,7 +530,7 @@ private struct UIVerificationError: LocalizedError {
 
     private static func checkSafeLaunchFlags() throws {
         let cases = [
-            ["--demo"], ["--empty"], ["--dark"], ["--light"], ["--check-quit"],
+            ["--demo"], ["--update-smoke", "invalid"], ["--empty"], ["--dark"], ["--light"], ["--check-quit"],
             ["--render-preview", "/tmp/example.png"], ["--preview-state", "error"],
             ["--preview-width", "620"], ["--preview-height", "780"], ["--ui-smoke-test"],
             ["--preview-state", "missing-five-hour"],

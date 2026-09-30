@@ -4,6 +4,8 @@
 
 A native Mac app to compare subscription limits, see reset times, and switch the account used by your next CLI session. Free software under the [MIT license](LICENSE).
 
+Native signed updates check automatically, download on click, and restart after confirmation. Claude Full/5-hour reset grants are read-only. Reset grants use the saved Claude Code login. Connect **billing** separately, through web sign-in or an existing Claude Desktop sign-in.
+
 [Download for Mac](https://switchboard.quasa0.com/#install) · [Website](https://switchboard.quasa0.com) · [Agent installation](https://switchboard.quasa0.com/install.md) · [Releases](https://github.com/quasa0/switchboard/releases)
 
 ![Switchboard dashboard in dark mode with sample accounts](site/assets/dashboard.png)
@@ -12,12 +14,12 @@ A native Mac app to compare subscription limits, see reset times, and switch the
 
 Requires **macOS 14+**. The download supports **Apple silicon and Intel**. Install Claude Code or Codex for each provider you want to use.
 
-1. [Download Switchboard 0.5.2](https://github.com/quasa0/switchboard/releases/download/v0.5.2/Switchboard-0.5.2-universal.dmg).
+1. [Download Switchboard 0.6.0](https://github.com/quasa0/switchboard/releases/download/v0.6.0/Switchboard-0.6.0-universal.dmg).
 2. Open the DMG. Drag Switchboard into Applications.
 3. Open Switchboard. This release is **ad hoc signed and not notarized**. If macOS blocks it, use **System Settings → Privacy & Security → Open Anyway** after your first open attempt, if you trust the download. [Apple explains this step](https://support.apple.com/en-us/102445).
 4. Choose **Add account → Save current login**, or sign in through the app. Save each account before adding the next.
 
-[ZIP download](https://github.com/quasa0/switchboard/releases/download/v0.5.2/Switchboard-0.5.2-universal.zip) · [SHA-256 checksums](https://github.com/quasa0/switchboard/releases/download/v0.5.2/SHA256SUMS.txt)
+[ZIP download](https://github.com/quasa0/switchboard/releases/download/v0.6.0/Switchboard-0.6.0-universal.zip) · [SHA-256 checksums](https://github.com/quasa0/switchboard/releases/download/v0.6.0/SHA256SUMS.txt)
 
 For a coding agent, paste: **Install Switchboard on this Mac. Read https://switchboard.quasa0.com/install.md and follow the steps. Verify the checksum and preserve existing credentials.**
 
@@ -25,7 +27,8 @@ For a coding agent, paste: **Install Switchboard on this Mac. Read https://switc
 
 - Shows Claude and ChatGPT subscription accounts on one screen, with a separate active account for each provider.
 - Displays remaining allowance, plan tiers, reset countdowns, and exact local dates. Claude includes Fable and other reported model limits.
-- Shows Codex manual reset credits and their expiry dates when supplied by the provider. It does not redeem credits.
+- Shows provider-reported Codex usage-credit balances and manual reset expiries separately. Claude's saved OAuth login shows Full and five-hour resets. It does not redeem resets or credits.
+- Refreshes usage every five minutes and highlights fresh general-limit headroom. Saved Codex login copies recover authentication failures when a valid copy remains.
 - Reads available subscription period dates. Claude billing dates use an optional, separate web sign-in. Manual overrides remain available.
 - Saves login snapshots in macOS Keychain. Uses the official CLIs for authentication and usage, without a proxy or model prompt.
 
@@ -35,7 +38,7 @@ The ChatGPT section shows **Codex allowances**, not ChatGPT message quotas. Miss
 
 ## Build from source
 
-Requires Swift 5.10+ through Xcode Command Line Tools. No Swift package dependencies.
+Requires Swift 5.10+ through Xcode Command Line Tools. Sparkle 2.10.0 is pinned for native signed updates.
 
 ```sh
 git clone https://github.com/quasa0/switchboard.git

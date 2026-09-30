@@ -31,7 +31,7 @@
       ]
     },
     {
-      "source": "/release.json",
+      "source": "/(release.json|appcast.xml)",
       "headers": [
         {
           "key": "Cache-Control",

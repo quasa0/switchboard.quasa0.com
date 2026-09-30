@@ -28,7 +28,24 @@ actor AccountEngine: SubscriptionEngine {
         defer { refreshing = false }
         let installation = try repository.withLock { try repository.prepareUsage(id) }
         do {
-            let usage = try await CLIUsageClient(executable: ClaudeExecutable.find()).fetch(installation: installation)
+            var usage = try await CLIUsageClient(executable: ClaudeExecutable.find()).fetch(installation: installation)
+            let credential = try repository.withLock { () -> OAuthCredential in
+                try repository.collectUsageCredentials(id, from: installation)
+                let (identity, token) = try repository.credential(for: id).validated()
+                guard let account = try repository.accounts().first(where: { $0.id == id }),
+                      account.accountUUID == identity.accountUUID, account.organizationUUID == identity.organizationUUID else {
+                    throw SwitchboardError.message("The Claude login changed during the reset check.")
+                }
+                return token
+            }
+            do {
+                usage.claudeResetSnapshot = try await ClaudeResetClient().fetch(credential: credential)
+                usage.claudeResetReadFailed = false
+            } catch {
+                try Task.checkCancellation()
+                usage.claudeResetReadFailed = true
+            }
+            try Task.checkCancellation()
             try repository.withLock {
                 try repository.collectUsageCredentials(id, from: installation)
                 try repository.updateUsage(id, usage: usage)
@@ -80,6 +97,13 @@ actor AccountEngine: SubscriptionEngine {
     @Published var notice: String?
     @Published var usageErrors: [UUID: String] = [:]
     @Published var loginInProgress = false
+    @Published var showsFableUsage = false {
+        didSet {
+            if provider == .claude, !isDemo {
+                UserDefaults.standard.set(showsFableUsage, forKey: "showsFableUsage")
+            }
+        }
+    }
     let isDemo: Bool
     private let engine: (any SubscriptionEngine)?
     private var refreshTask: Task<Void, Never>?
@@ -98,6 +122,9 @@ actor AccountEngine: SubscriptionEngine {
             case .chatGPT: engine = CodexAccountEngine()
             }
             isLoading = true
+            if provider == .claude {
+                showsFableUsage = UserDefaults.standard.bool(forKey: "showsFableUsage")
+            }
         }
     }
 
@@ -122,6 +149,17 @@ actor AccountEngine: SubscriptionEngine {
                     source: .codexIDToken)
             } else {
                 accounts[index].claudeBilling = ClaudeBillingSnapshot(checkedAt: now, status: "active", nextChargeAt: end)
+                let dates = ISO8601DateFormatter()
+                accounts[index].usage?.claudeResetSnapshot = try? ClaudeResetSnapshot.parse([
+                    "eligible": true, "grants": index == 0 ? [[
+                        "id": "sample-full-reset", "resets_left": 1,
+                        "clears": ["five_hour", "seven_day", "seven_day_overage_included"],
+                        "starts_at": dates.string(from: now.addingTimeInterval(-86_400)),
+                        "ends_at": dates.string(from: now.addingTimeInterval(22 * 86_400)),
+                        "paused": false, "usable_now": true
+                    ]] : []
+                ], checkedAt: now)
+                accounts[index].usage?.claudeResetReadFailed = false
             }
         }
         if provider == .chatGPT {
@@ -142,6 +180,8 @@ actor AccountEngine: SubscriptionEngine {
                     grantedAt: now.addingTimeInterval(-86_400), expiresAt: now.addingTimeInterval(27 * 86_400 + 10_800), title: "Earned reset")
             ])
             accounts[1].usage?.manualResets = ManualResetSummary(availableCount: 0, credits: [])
+            accounts[0].usage?.creditBalances = [UsageCreditBalance(id: "codex", name: "Codex", hasCredits: true, unlimited: false, balance: "12500")]
+            accounts[1].usage?.creditBalances = [UsageCreditBalance(id: "codex", name: "Codex", hasCredits: false, unlimited: false, balance: "0")]
         }
         activeID = accounts[0].id
         current = previewLogin(for: accounts[0])
@@ -265,9 +305,10 @@ actor AccountEngine: SubscriptionEngine {
         if error == nil { await refresh() }
     }
     func switchAccount(_ account: SavedAccount) async {
+        guard !stopping, !isBusy, !isRefreshing, !isLoading, !loginInProgress else { return }
+        switchingAccountID = account.id
+        defer { switchingAccountID = nil }
         await perform {
-            switchingAccountID = account.id
-            defer { switchingAccountID = nil }
             if let engine { try await engine.activate(account.id) }
             else { activeID = account.id; current = previewLogin(for: account) }
             notice = provider == .chatGPT

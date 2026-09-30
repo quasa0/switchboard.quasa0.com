@@ -3,20 +3,20 @@ import SwiftUI
 import SwitchboardCore
 
 private enum Palette {
-    static let canvas = adaptive(light: 0xFAFAF9, dark: 0x141413)
-    static let paper = adaptive(light: 0xFFFFFF, dark: 0x1E1E1C)
-    static let ink = adaptive(light: 0x242423, dark: 0xE8E8E5)
-    static let muted = adaptive(light: 0x70706B, dark: 0xA1A19B)
-    static let faint = adaptive(light: 0xE7E7E3, dark: 0x2C2C29)
-    static let accent = adaptive(light: 0x0B8866, dark: 0x10B981)
-    static let accentWash = adaptive(light: 0xEDF7F2, dark: 0x16281F)
-    static let green = adaptive(light: 0x15835F, dark: 0x6BCBA9)
-    static let greenWash = adaptive(light: 0xE7F4EE, dark: 0x193126)
-    static let accentText = adaptive(light: 0x0B7557, dark: 0x74D5B3)
-    static let warning = adaptive(light: 0x90601B, dark: 0xE4BA75)
-    static let danger = adaptive(light: 0xB13B32, dark: 0xF2A39B)
-    static let errorWash = adaptive(light: 0xFBEFEC, dark: 0x321C1A)
-    static let meter = adaptive(light: 0x0B9970, dark: 0x10B981)
+    static let canvas = adaptive(light: 0xFAFAFA, dark: 0x0A0A0A)
+    static let paper = adaptive(light: 0xFFFFFF, dark: 0x171717)
+    static let ink = adaptive(light: 0x171717, dark: 0xEDEDED)
+    static let muted = adaptive(light: 0x666666, dark: 0xA1A1A1)
+    static let faint = adaptive(light: 0xEAEAEA, dark: 0x292929)
+    static let accent = ink
+    static let accentWash = faint
+    static let green = ink
+    static let greenWash = faint
+    static let accentText = adaptive(light: 0x0068D6, dark: 0x52A8FF)
+    static let warning = adaptive(light: 0x8F5200, dark: 0xFFB224)
+    static let danger = adaptive(light: 0xC42B30, dark: 0xFF757A)
+    static let errorWash = adaptive(light: 0xFFF0F0, dark: 0x2A1314)
+    static let meter = ink
     static let edge = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor.white.withAlphaComponent(0.09) : NSColor.black.withAlphaComponent(0.07)
@@ -38,6 +38,38 @@ private struct AccountActionTarget: Identifiable {
     var id: String { "\(provider.rawValue)-\(account.id.uuidString)" }
 }
 
+private struct PreserveDisabledControlAppearanceKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var preservesDisabledControlAppearance: Bool {
+        get { self[PreserveDisabledControlAppearanceKey.self] }
+        set { self[PreserveDisabledControlAppearanceKey.self] = newValue }
+    }
+}
+
+private struct StableDisabledMenuAppearance<LabelView: View>: ViewModifier {
+    let disabled: Bool
+    let label: LabelView
+    @Environment(\.preservesDisabledControlAppearance) private var preservesAppearance
+
+    func body(content: Content) -> some View {
+        // Native menus dim their labels independently of ButtonStyle. Keep the
+        // disabled menu in place and draw the same inert label above it.
+        content
+            .disabled(disabled)
+            .opacity(disabled && preservesAppearance ? 0 : 1)
+            .overlay {
+                if disabled && preservesAppearance {
+                    label.environment(\.isEnabled, true)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+    }
+}
+
 struct AccountListView: View {
     @ObservedObject var model: DashboardModel
     @State private var accountToAdd: SubscriptionProvider?
@@ -56,7 +88,7 @@ struct AccountListView: View {
             header
             GeometryReader { geometry in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 16) {
                         ForEach(model.providers, id: \.provider) { providerModel in
                             ProviderAccountSection(
                                 model: providerModel,
@@ -71,7 +103,7 @@ struct AccountListView: View {
                         }
                     }
                     .padding(.horizontal, 24)
-                    .padding(.top, 8)
+                    .padding(.top, 4)
                     .padding(.bottom, 24)
                 }
             }
@@ -80,6 +112,7 @@ struct AccountListView: View {
         .frame(minWidth: 620, idealWidth: 1120, minHeight: 490, idealHeight: 780)
         .background(Palette.canvas)
         .foregroundStyle(Palette.ink)
+        .environment(\.preservesDisabledControlAppearance, model.providers.contains { $0.switchingAccountID != nil })
         .sheet(item: $accountToAdd) { provider in
             AddAccountSheet(model: model.model(for: provider))
         }
@@ -107,6 +140,13 @@ struct AccountListView: View {
     }
 
     private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            headerContent(compact: false)
+            headerContent(compact: true)
+        }
+    }
+
+    private func headerContent(compact: Bool) -> some View {
         HStack(alignment: .center, spacing: 14) {
             Image(systemName: "arrow.left.arrow.right")
                 .font(.system(size: 18, weight: .medium))
@@ -118,15 +158,25 @@ struct AccountListView: View {
                     Text("Switchboard")
                         .font(.system(size: 20, weight: .semibold))
                         .tracking(-0.5)
-                    Text("\(model.accountCount) accounts")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Palette.muted)
+                        .fixedSize()
+                    if !compact {
+                        Text("\(model.accountCount) accounts")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Palette.muted)
+                    }
                 }
-                Text(model.isDemo ? "Preview · Sample accounts" : "All your accounts, at a glance.")
+                Text(model.isDemo ? "Preview · Sample accounts" : "Choose your next session.")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.muted)
             }
             Spacer(minLength: 12)
+            if !compact { TimelineView(.periodic(from: .now, by: 60)) { context in
+                Text(model.isDemo ? "Auto refresh · 5 min" : model.nextRefreshAt.map {
+                    "Next refresh \(dueInterval($0, now: context.date))"
+                } ?? "Auto refresh · 5 min")
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.muted)
+            }.fixedSize() }
             Button { Task { await model.refresh() } } label: {
                 HStack(spacing: 7) {
                     ZStack {
@@ -148,18 +198,25 @@ struct AccountListView: View {
                 Button("Add Claude account") { accountToAdd = .claude }
                 Button("Add ChatGPT account") { accountToAdd = .chatGPT }
             } label: {
-                Label("Add account", systemImage: "plus")
+                addAccountMenuLabel
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .buttonStyle(ActionButtonStyle(prominent: false))
             .fixedSize()
-            .disabled(model.isBlocked || isPresentingAccountAction)
+            .modifier(StableDisabledMenuAppearance(disabled: model.isBlocked || isPresentingAccountAction,
+                                                  label: addAccountMenuLabel))
             .accessibilityLabel("Add account")
         }
         .padding(.horizontal, 24)
-        .padding(.top, 16)
-        .padding(.bottom, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+    }
+
+    private var addAccountMenuLabel: some View {
+        Label("Add account", systemImage: "plus")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Palette.ink)
     }
 
     private var footer: some View {
@@ -171,6 +228,7 @@ struct AccountListView: View {
                     .font(.system(size: 11))
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 10)
+                DesktopUpdateControl(updates: model.updates, accountOperationActive: model.isBlocked)
                 Image(systemName: "lock.shield").font(.system(size: 12))
                     .help("Saved logins stay in your Mac’s Keychain.")
                     .accessibilityLabel("Saved logins stay in your Mac’s Keychain")
@@ -179,6 +237,55 @@ struct AccountListView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 13)
         }
+    }
+}
+
+private struct DesktopUpdateControl: View {
+    @ObservedObject var updates: DesktopUpdates
+    let accountOperationActive: Bool
+    @State private var confirmsRestart = false
+
+    var body: some View {
+        Group {
+            switch updates.state.status {
+            case .available:
+                Button { updates.download() } label: {
+                    Label("Update \(updates.state.version ?? "")", systemImage: "arrow.down.circle")
+                }
+                .disabled(!updates.canDownload)
+            case .downloading:
+                Text(updates.state.progress.map { "Downloading \(Int($0))%" } ?? "Downloading update…")
+                    .monospacedDigit()
+            case .ready:
+                Button { confirmsRestart = true } label: {
+                    Label("Restart to update", systemImage: "arrow.clockwise")
+                }
+                .disabled(!updates.canInstall || accountOperationActive)
+                .help(accountOperationActive ? "Finish the account operation before restarting." : "Install the verified update and reopen Switchboard.")
+            case .installing: Text("Restarting…")
+            case .checking: Text("Checking for updates…")
+            case .error:
+                Button("Retry update check") { updates.check() }.disabled(!updates.canCheck)
+            case .idle, .disabled: EmptyView()
+            }
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(Palette.ink)
+        .buttonStyle(UpdateActionStyle())
+        .help(updates.state.message ?? "Switchboard updates")
+        .alert("Restart to update Switchboard?", isPresented: $confirmsRestart) {
+            Button("Cancel", role: .cancel) {}
+            Button("Update and restart") { if !accountOperationActive { updates.install() } }
+        } message: {
+            Text("Switchboard will install version \(updates.state.version ?? "") and reopen. Your saved accounts stay on this Mac.")
+        }
+    }
+}
+
+private struct UpdateActionStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.8 : 1)
+            .contentShape(Rectangle())
     }
 }
 
@@ -194,10 +301,11 @@ private struct ProviderAccountSection: View {
     let onRemove: (SavedAccount) -> Void
 
     private var metricTitles: [String] {
-        let metrics = model.accounts.flatMap { accountUsageMetrics($0.usage, provider: model.provider) }
-        let ordered = metrics.filter(\.isFeatured)
-            + metrics.filter { $0.id == "five-hour" }
-            + metrics.filter { $0.id == "weekly" }
+        // Keep reported Fable slots in the grid even when their contents are hidden.
+        let metrics = model.accounts.flatMap { accountUsageMetrics($0.usage, provider: model.provider, showsFable: true) }
+        let generalIDs = model.provider == .claude ? ["weekly", "five-hour"] : ["five-hour", "weekly"]
+        let ordered = generalIDs.flatMap { id in metrics.filter { $0.id == id } }
+            + metrics.filter(\.isFeatured)
             + metrics.filter { !$0.isFeatured && $0.id != "five-hour" && $0.id != "weekly" }
         return ordered.reduce(into: []) { titles, metric in
             if !titles.contains(metric.title) { titles.append(metric.title) }
@@ -205,14 +313,14 @@ private struct ProviderAccountSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             sectionHeader
             if let loadError = model.loadError {
                 MessageStrip(symbol: "exclamationmark.circle", text: loadError, isError: true)
             }
             if let error = model.error {
                 MessageStrip(symbol: "exclamationmark.circle", text: error, isError: true)
-            } else if model.loadError == nil, let notice = model.notice {
+            } else if model.accounts.isEmpty, model.loadError == nil, let notice = model.notice {
                 MessageStrip(symbol: "checkmark.circle", text: notice, isError: false)
             }
 
@@ -226,6 +334,9 @@ private struct ProviderAccountSection: View {
                     emptyState
                 }
             } else {
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    decisionSummary(now: context.date)
+                }
                 VStack(spacing: 0) {
                     ForEach(model.accounts) { account in
                         AccountRow(
@@ -233,7 +344,8 @@ private struct ProviderAccountSection: View {
                             provider: model.provider,
                             wideLayout: wideLayout,
                             metricTitles: metricTitles,
-                            showsManualResets: model.provider == .chatGPT || model.accounts.contains { $0.usage?.manualResets != nil },
+                            showsFable: model.showsFableUsage,
+                            showsManualResets: true,
                             isActive: account.id == model.activeID,
                             isBusy: isBlocked || connectingBilling != nil,
                             isSwitching: account.id == model.switchingAccountID,
@@ -259,6 +371,40 @@ private struct ProviderAccountSection: View {
         }
     }
 
+    @ViewBuilder
+    private func decisionSummary(now: Date) -> some View {
+        let recommendedID = AccountReadiness.recommendation(accounts: model.accounts,
+            failedIDs: Set(model.usageErrors.keys), now: now)
+        if let account = model.accounts.first(where: { $0.id == recommendedID }) {
+            let readiness = AccountReadiness(usage: account.usage, now: now)
+            let mixedPlans = Set(model.accounts.map { model.provider.planLabel($0.usage?.reportedPlan ?? $0.plan) }).count > 1
+            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text("\(mixedPlans ? "Most % left ·" : account.id == model.activeID ? "Stay on" : "Use") \(account.label)")
+                            .font(.system(size: 16, weight: .semibold))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(account.label)
+                        Text("\(Int((readiness.remaining ?? 0).rounded()))% headroom")
+                            .font(.system(size: 12)).foregroundStyle(Palette.muted).fixedSize()
+                    }
+                    Text("\(mixedPlans ? "Different plans have different task budgets" : "Most general headroom")\(readiness.resetAt.map { " · \(readiness.limitingWindow ?? "Limit") \(resetCountdown($0, now: now).lowercased())" } ?? "")")
+                        .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+            }
+            .padding(.vertical, 3)
+            .help("Compares fresh general-window percentages, not task capacity across plans. Named model limits and credits are shown below. Equal percentages favor the earlier reset.")
+        } else {
+            Text(model.isRefreshing ? "Checking which account is ready…" : "Check the limits below before switching.")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Palette.muted)
+                .padding(.vertical, 9)
+        }
+    }
+
     private var sectionHeader: some View {
         HStack(spacing: 8) {
             Text(model.provider.displayName)
@@ -267,7 +413,17 @@ private struct ProviderAccountSection: View {
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(Palette.muted)
                 .accessibilityLabel("\(model.accounts.count) saved accounts")
+            Text("Remaining allowance")
+                .font(.system(size: 11)).foregroundStyle(Palette.muted)
             Spacer(minLength: 12)
+            if model.provider == .claude {
+                Toggle("Show Fable usage", isOn: $model.showsFableUsage)
+                    .toggleStyle(NeutralCheckboxStyle())
+                    .font(.system(size: 11))
+                    .fixedSize()
+                    .help("Show Fable's weekly limit after the weekly and five-hour limits. This only changes the dashboard.")
+                    .accessibilityIdentifier("show-fable-usage")
+            }
             Button(action: onAdd) {
                 Label("Add account", systemImage: "plus")
             }
@@ -342,24 +498,26 @@ struct AccountUsageMetric: Identifiable {
 }
 
 /// Only reported windows become meters. Missing fields do not mean zero usage or a failed request.
-func accountUsageMetrics(_ usage: UsageSnapshot?, provider: SubscriptionProvider) -> [AccountUsageMetric] {
+func accountUsageMetrics(_ usage: UsageSnapshot?, provider: SubscriptionProvider, showsFable: Bool = false) -> [AccountUsageMetric] {
     guard let usage else { return [] }
     var metrics: [AccountUsageMetric] = []
     let featuredIndex = provider == .claude ? usage.modelScoped.firstIndex {
         $0.name.range(of: "\\bfable\\b", options: [.regularExpression, .caseInsensitive]) != nil
     } : nil
-    if let featuredIndex {
+    let generalWindows = provider == .claude
+        ? [("weekly", "Weekly limit", usage.sevenDay), ("five-hour", "Five-hour limit", usage.fiveHour)]
+        : [("five-hour", "Five-hour limit", usage.fiveHour), ("weekly", "Weekly limit", usage.sevenDay)]
+    for (id, title, window) in generalWindows {
+        if let window { metrics.append(AccountUsageMetric(id: id, title: title, window: window)) }
+    }
+    if showsFable, let featuredIndex {
         let scoped = usage.modelScoped[featuredIndex]
         metrics.append(AccountUsageMetric(id: "model-\(featuredIndex)", title: "Weekly \(scoped.name)",
                                           window: scoped.window, isFeatured: true))
     }
-    if let window = usage.fiveHour {
-        metrics.append(AccountUsageMetric(id: "five-hour", title: "Five-hour limit", window: window))
-    }
-    if let window = usage.sevenDay {
-        metrics.append(AccountUsageMetric(id: "weekly", title: "Weekly limit", window: window))
-    }
     for (index, scoped) in usage.modelScoped.enumerated() where index != featuredIndex {
+        if provider == .claude, !showsFable,
+           scoped.name.range(of: "\\bfable\\b", options: [.regularExpression, .caseInsensitive]) != nil { continue }
         metrics.append(AccountUsageMetric(id: "model-\(index)",
                                           title: provider == .claude ? "Weekly \(scoped.name)" : scoped.name,
                                           window: scoped.window))
@@ -523,6 +681,7 @@ private struct AccountRow: View {
     let provider: SubscriptionProvider
     let wideLayout: Bool
     let metricTitles: [String]
+    let showsFable: Bool
     let showsManualResets: Bool
     let isActive: Bool
     let isBusy: Bool
@@ -543,7 +702,7 @@ private struct AccountRow: View {
     }
 
     private var metrics: [AccountUsageMetric] {
-        accountUsageMetrics(account.usage, provider: provider)
+        accountUsageMetrics(account.usage, provider: provider, showsFable: showsFable)
     }
 
     var body: some View {
@@ -581,7 +740,7 @@ private struct AccountRow: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -618,9 +777,9 @@ private struct AccountRow: View {
     }
 
     private var identity: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(account.label)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
                 .truncationMode(hasCustomName ? .tail : .middle)
                 .help(hasCustomName ? "\(account.label)\n\(account.email)" : account.email)
@@ -633,7 +792,7 @@ private struct AccountRow: View {
                     .help(account.email)
             }
             HStack(spacing: 8) {
-                PlanBadge(label: provider.planLabel(account.plan))
+                PlanBadge(label: provider.planLabel(account.usage?.reportedPlan ?? account.plan))
                 if let usage = account.usage {
                     TimelineView(.periodic(from: .now, by: 60)) { context in
                         Text("\(usageError == nil ? "Checked" : "Saved") \(relativeDate(usage.fetchedAt, now: context.date))")
@@ -643,6 +802,9 @@ private struct AccountRow: View {
                     .lineLimit(1)
                     .help("Last successful usage check: \(usage.fetchedAt.formatted(date: .complete, time: .shortened))")
                 }
+            }
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                readinessLabel(now: context.date)
             }
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 if let billingDate = accountBillingDate(account, now: context.date) {
@@ -665,7 +827,7 @@ private struct AccountRow: View {
     @ViewBuilder
     private var usageContent: some View {
         if !metrics.isEmpty || account.usage != nil && showsManualResets {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 22, alignment: .top), count: min(3, metricTitles.count + (showsManualResets ? 1 : 0))),
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 22, alignment: .top), count: 3),
                       alignment: .leading, spacing: 18) {
                 ForEach(metricTitles, id: \.self) { title in
                     if let metric = metrics.first(where: { $0.title == title }) {
@@ -674,14 +836,35 @@ private struct AccountRow: View {
                         Color.clear.frame(height: 66).accessibilityHidden(true)
                     }
                 }
+                if provider == .chatGPT {
+                    CreditBalanceView(balances: account.usage?.creditBalances)
+                }
                 if showsManualResets {
-                    ManualResetSummaryView(summary: account.usage?.manualResets)
+                    if provider == .claude {
+                        ClaudeResetSummaryView(account: account)
+                    } else {
+                        ManualResetSummaryView(summary: account.usage?.manualResets)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             unavailableUsage
         }
+    }
+
+    private func readinessLabel(now: Date) -> some View {
+        let readiness = AccountReadiness(usage: account.usage, failed: usageError != nil, now: now)
+        let text: String
+        let color: Color
+        switch readiness.status {
+        case .ready: text = "Ready · \(Int((readiness.remaining ?? 0).rounded()))% \(readiness.limitingWindow ?? "") left"; color = Palette.ink
+        case .limited: text = "Low headroom · \(Int((readiness.remaining ?? 0).rounded()))% left"; color = Palette.warning
+        case .exhausted: text = "\(readiness.limitingWindow ?? "General") limit reached"; color = Palette.danger
+        case .stale: text = "Refresh needed"; color = Palette.warning
+        case .unknown: text = "General limits unavailable"; color = Palette.muted
+        }
+        return Text(text).font(.system(size: 11, weight: .medium)).foregroundStyle(color)
     }
 
     private var unavailableUsage: some View {
@@ -694,15 +877,14 @@ private struct AccountRow: View {
 
     private var actionIndicator: some View {
         HStack(spacing: 5) {
-            if isActive {
-                Image(systemName: "checkmark.circle.fill")
-                Text("Active")
-            } else if isSwitching {
+            if isSwitching {
                 ProgressView().controlSize(.mini).frame(width: 12, height: 12)
                 Text("Switching…")
+            } else if isActive {
+                Image(systemName: "checkmark.circle.fill")
+                Text("Active")
             } else {
-                Text("Switch")
-                Image(systemName: "arrow.right").font(.system(size: 10, weight: .semibold))
+                Color.clear.frame(width: 1, height: 12).accessibilityHidden(true)
             }
         }
         .font(.system(size: 11, weight: .semibold))
@@ -719,7 +901,7 @@ private struct AccountRow: View {
                 Button(account.claudeBilling == nil ? "Connect billing…" : "Refresh billing…",
                        systemImage: "creditcard", action: onConnectBilling)
             }
-            if account.usage?.manualResets != nil {
+            if account.usage?.manualResets != nil || account.claudeResets != nil {
                 Button("Manual reset details…", systemImage: "arrow.counterclockwise", action: onViewResets)
             }
             Button(account.renewalAt == nil ? "Set renewal override…" : "Edit renewal override…",
@@ -728,20 +910,24 @@ private struct AccountRow: View {
             Divider()
             Button("Remove saved account…", systemImage: "trash", role: .destructive, action: onRemove)
         } label: {
-            Label("Options for \(provider.displayName) account \(account.label)", systemImage: "ellipsis")
-                .labelStyle(.iconOnly)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Palette.muted)
-                .frame(width: 32, height: 32)
-                .contentShape(Rectangle())
+            optionsLabel
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .disabled(isBusy)
+        .modifier(StableDisabledMenuAppearance(disabled: isBusy, label: optionsLabel))
         .help("Options for \(provider.displayName) account \(account.label): set renewal date, rename, or remove")
         .accessibilityLabel("Options for \(provider.displayName) account \(account.label)")
         .accessibilityIdentifier("account-options-\(provider.rawValue)-\(account.id.uuidString)")
+    }
+
+    private var optionsLabel: some View {
+        Label("Options for \(provider.displayName) account \(account.label)", systemImage: "ellipsis")
+            .labelStyle(.iconOnly)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(Palette.muted)
+            .frame(width: 32, height: 32)
+            .contentShape(Rectangle())
     }
 
     private var usageDescription: String {
@@ -754,7 +940,11 @@ private struct AccountRow: View {
         let windows = descriptions.isEmpty ? emptyDescription : descriptions.joined(separator: " ")
         let failure = usageError.map { "Usage check failed: \($0)" } ?? ""
         let resets: String
-        if let summary = account.usage?.manualResets {
+        if provider == .claude, let snapshot = account.claudeResets {
+            resets = snapshot.grants.map {
+                "\($0.title), \($0.resetsLeft) unused, \($0.paused ? "paused" : $0.usableNow ? "usable now" : "conditionally usable"), \($0.expiresAt.map { "expires \($0.formatted(date: .complete, time: .shortened))" } ?? "expiry not reported")."
+            }.joined(separator: " ") + " Reset data checked \(snapshot.checkedAt.formatted(date: .abbreviated, time: .shortened))."
+        } else if let summary = account.usage?.manualResets {
             let dates = summary.credits?.filter { $0.status == "available" }.enumerated().map { index, credit in
                 "Reset \(index + 1) \(credit.expiresAt.map { "expires \($0.formatted(date: .complete, time: .shortened))" } ?? "has no expiry")."
             }.joined(separator: " ") ?? "Expiry details unavailable."
@@ -790,7 +980,7 @@ private struct UsageMeter: View {
                     .help(title)
                 Spacer(minLength: 0)
                 Text("\(remainingPercentage(window))%")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 21, weight: .semibold))
                     .monospacedDigit()
                     .foregroundStyle(window.fraction >= 1 ? Palette.danger : Palette.ink)
                     .fixedSize()
@@ -826,11 +1016,90 @@ private struct UsageMeter: View {
     }
 }
 
+private struct CreditBalanceView: View {
+    let balances: [UsageCreditBalance]?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Usage credits").font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.muted)
+            if let balances, !balances.isEmpty {
+                ForEach(balances) { credit in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(credit.unlimited ? "Unlimited" : formatted(credit.balance) ?? (credit.hasCredits ? "Available" : "None available"))
+                            .font(.system(size: 21, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(credit.hasCredits || credit.unlimited ? Palette.ink : Palette.muted)
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                        Text(balances.count > 1 ? credit.name : "Beyond included usage")
+                            .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        if credit.balance == nil && !credit.unlimited {
+                            Text("Balance not reported").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                        }
+                    }
+                }
+            } else {
+                Text("Not reported").font(.system(size: 12)).foregroundStyle(Palette.muted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .help("Provider-reported usage credits, separate from manual resets. This interface does not report grant history or credit expiry dates.")
+    }
+    private func formatted(_ balance: String?) -> String? {
+        guard let balance else { return nil }
+        let number = NSDecimalNumber(string: balance, locale: Locale(identifier: "en_US_POSIX"))
+        guard number != .notANumber, balance.filter(\.isNumber).count <= 38 else { return balance }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = balance.split(separator: ".").dropFirst().first?.count ?? 0
+        return formatter.string(from: number) ?? balance
+    }
+}
+
+private struct ClaudeResetSummaryView: View {
+    let account: SavedAccount
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Manual resets").font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.muted)
+                if let snapshot = account.claudeResets {
+                    let grants = snapshot.eligible ? snapshot.grants.filter { $0.isAvailable(at: context.date) } : []
+                    let first = grants.sorted { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }.first
+                    if let first {
+                        Text("\(first.title) · \(grants.filter { $0.title == first.title }.reduce(0) { $0 + $1.resetsLeft }) available")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(first.expiresAt.map { "Expires \(compactDueDate($0))" } ?? "Expiry not reported")
+                            .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        if !first.usableNow {
+                            Text("Use conditions apply").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                        }
+                        let sessionCount = grants.filter { $0.title == "5-hour reset" }.reduce(0) { $0 + $1.resetsLeft }
+                        if first.title != "5-hour reset" {
+                            Text("5-hour reset · \(sessionCount == 0 ? "None" : "\(sessionCount) available")")
+                                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                        }
+                    } else {
+                        Text("None available").font(.system(size: 12)).foregroundStyle(Palette.muted)
+                    }
+                    if account.claudeResetsReadFailed || context.date.timeIntervalSince(snapshot.checkedAt) > 600 {
+                        Text("Saved reset data · Refresh needed").font(.system(size: 10)).foregroundStyle(Palette.warning)
+                    }
+                } else {
+                    Text("Unavailable").font(.system(size: 12)).foregroundStyle(Palette.muted)
+                    Text(account.claudeResetsReadFailed ? "Reset check failed" : "Refresh usage to check resets")
+                        .font(.system(size: 10)).foregroundStyle(Palette.muted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
 private struct ManualResetSummaryView: View {
     let summary: ManualResetSummary?
 
     private var availableCredits: [ManualResetCredit] {
-        summary?.credits?.filter { $0.status == "available" } ?? []
+        (summary?.credits?.filter { $0.status == "available" } ?? []).sorted {
+            ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture)
+        }
     }
 
     var body: some View {
@@ -909,7 +1178,27 @@ private struct ResetDetailsSheet: View {
             Text("\(provider.displayName) · \(account.email)")
                 .font(.system(size: 12))
                 .foregroundStyle(Palette.muted)
-            if let summary = account.usage?.manualResets {
+            if provider == .claude, let snapshot = account.claudeResets {
+                Text("Read-only · Use resets in Claude Settings → Usage.")
+                    .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        ForEach(snapshot.grants) { grant in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(grant.title).font(.system(size: 13, weight: .semibold))
+                                Text("\(grant.resetsLeft) unused · \(!snapshot.eligible ? "Not eligible" : grant.paused ? "Paused" : (grant.expiresAt.map { $0 <= Date() } ?? false) ? "Expired" : grant.usableNow ? "Usable now" : "Use conditions apply")")
+                                    .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                                Text(grant.expiresAt.map { "Expires \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Expiry not reported")
+                                    .font(.system(size: 12, weight: .medium))
+                                Divider()
+                            }
+                        }
+                        if snapshot.grants.isEmpty { Text("No reset grants reported.") }
+                    }
+                }.frame(maxHeight: 360)
+                Text("Checked \(snapshot.checkedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.system(size: 11)).foregroundStyle(Palette.muted)
+            } else if let summary = account.usage?.manualResets {
                 Text("\(summary.availableCount) available")
                     .font(.system(size: 16, weight: .semibold))
                 if let credits = summary.credits {
@@ -955,7 +1244,7 @@ private struct ResetDetailsSheet: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.muted)
             }
-            if let usage = account.usage {
+            if provider != .claude, let usage = account.usage {
                 Text("Checked \(usage.fetchedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
@@ -1335,10 +1624,47 @@ private struct MessageStrip: View {
     }
 }
 
-private struct ActionButtonStyle: ButtonStyle {
+private struct NeutralCheckboxStyle: ToggleStyle {
+    @FocusState private var isFocused: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button { configuration.isOn.toggle() } label: {
+            HStack(spacing: 7) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(configuration.isOn ? Palette.ink : Palette.paper)
+                    .overlay(RoundedRectangle(cornerRadius: 3)
+                        .strokeBorder(configuration.isOn ? Palette.ink : Palette.muted, lineWidth: 1))
+                    .overlay {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Palette.canvas)
+                            .opacity(configuration.isOn ? 1 : 0)
+                    }
+                    .frame(width: 14, height: 14)
+                    .overlay(RoundedRectangle(cornerRadius: 5)
+                        .stroke(Palette.ink, lineWidth: 2).padding(-3)
+                        .opacity(isFocused ? 1 : 0))
+                    .accessibilityHidden(true)
+                configuration.label.foregroundStyle(Palette.ink)
+            }
+            .frame(minHeight: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focused($isFocused)
+        .focusEffectDisabled()
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+                .toggleStyle(.checkbox)
+        }
+    }
+}
+
+struct ActionButtonStyle: ButtonStyle {
     var prominent: Bool
     var staticFeedback = false
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.preservesDisabledControlAppearance) private var preservesDisabledControlAppearance
     @Environment(\.isFocused) private var isFocused
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1357,7 +1683,7 @@ private struct ActionButtonStyle: ButtonStyle {
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(prominent ? Color.clear : Palette.edge, lineWidth: 1))
             .shadow(color: .black.opacity(prominent ? 0 : 0.04), radius: 1, x: 0, y: 1)
             .overlay(RoundedRectangle(cornerRadius: 13).stroke(Palette.accentText, lineWidth: 2).padding(-3).opacity(isFocused ? 1 : 0))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.45)
+            .opacity(isEnabled || preservesDisabledControlAppearance ? (configuration.isPressed ? 0.82 : 1) : 0.45)
             .scaleEffect(moving && configuration.isPressed ? 0.96 : 1)
             .animation(moving ? .timingCurve(0.2, 0, 0, 1, duration: 0.15) : nil, value: configuration.isPressed)
             .contentShape(RoundedRectangle(cornerRadius: 10))

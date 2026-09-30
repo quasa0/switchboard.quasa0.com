@@ -11,9 +11,22 @@ public final class CodexAccountRepository {
     private let decoder = JSONDecoder()
     private struct UsageCheck {
         var installation: CodexInstallation
-        var saved: CodexCredentialSnapshot
+        var saved: Data?
+        var prepared: CodexCredentialSnapshot
     }
     private var usageChecks: [UUID: UsageCheck] = [:]
+    private func backupKey(_ id: UUID) -> String { "\(id.uuidString).backups" }
+
+    private func matches(_ snapshot: CodexCredentialSnapshot, account: SavedAccount) -> Bool {
+        guard let identity = try? snapshot.validated() else { return false }
+        return identity.accountUUID == account.accountUUID && identity.organizationUUID == account.organizationUUID
+    }
+
+    /// A bounded history stays in Keychain, separate from Codex's logout-owned file.
+    private func backups(_ id: UUID) throws -> [CodexCredentialSnapshot] {
+        guard let data = try secrets.read(service: vaultService, account: backupKey(id)) else { return [] }
+        return (try? decoder.decode([CodexCredentialSnapshot].self, from: data)) ?? []
+    }
 
     public init(directory: URL, secrets: SecretStore, installation: CodexInstallation,
                 vaultService: String = CodexAccountRepository.vaultService) {
@@ -79,12 +92,28 @@ public final class CodexAccountRepository {
             if !older { account.subscriptionPeriod = period }
         }
         let previous = try secrets.read(service: vaultService, account: account.id.uuidString)
-        try secrets.write(encoder.encode(snapshot), service: vaultService, account: account.id.uuidString)
+        let previousBackups = try secrets.read(service: vaultService, account: backupKey(account.id))
+        var history = try backups(account.id)
+        if let previous, let old = try? decoder.decode(CodexCredentialSnapshot.self, from: previous),
+           matches(old, account: account), old != snapshot {
+            history.removeAll { $0 == old || $0 == snapshot }
+            history.insert(old, at: 0)
+        }
+        // First capture also gets a redundant Keychain copy; recovery must work
+        // before this account has completed a usage check or token rotation.
+        if history.isEmpty { history = [snapshot] }
         if let index { accounts[index] = account } else { accounts.append(account) }
-        do { try save(accounts) }
+        do {
+            // Save the outgoing copy before replacing the primary. Interrupted writes retain it.
+            try secrets.write(encoder.encode(Array(history.prefix(3))), service: vaultService, account: backupKey(account.id))
+            try secrets.write(encoder.encode(snapshot), service: vaultService, account: account.id.uuidString)
+            try save(accounts)
+        }
         catch {
             if let previous { try? secrets.write(previous, service: vaultService, account: account.id.uuidString) }
             else { try? secrets.delete(service: vaultService, account: account.id.uuidString) }
+            if let previousBackups { try? secrets.write(previousBackups, service: vaultService, account: backupKey(account.id)) }
+            else { try? secrets.delete(service: vaultService, account: backupKey(account.id)) }
             throw error
         }
         return account
@@ -135,10 +164,15 @@ public final class CodexAccountRepository {
         guard usageChecks[id] == nil else { throw SwitchboardError.message("Wait for this account's usage check to finish before removing it.") }
         let existing = try accounts()
         let previous = try secrets.read(service: vaultService, account: id.uuidString)
-        try secrets.delete(service: vaultService, account: id.uuidString)
-        do { try save(existing.filter { $0.id != id }) }
+        let previousBackups = try secrets.read(service: vaultService, account: backupKey(id))
+        do {
+            try secrets.delete(service: vaultService, account: id.uuidString)
+            try secrets.delete(service: vaultService, account: backupKey(id))
+            try save(existing.filter { $0.id != id })
+        }
         catch {
             if let previous { try? secrets.write(previous, service: vaultService, account: id.uuidString) }
+            if let previousBackups { try? secrets.write(previousBackups, service: vaultService, account: backupKey(id)) }
             throw error
         }
         // Deleting our saved copy never calls logout or revokes the active Codex session.
@@ -156,55 +190,85 @@ public final class CodexAccountRepository {
         .isolated(at: directory.appendingPathComponent("profiles/\(id.uuidString)", isDirectory: true))
     }
 
-    public func prepareUsage(_ id: UUID) throws -> CodexInstallation {
+    public func prepareUsage(_ id: UUID, excluding attempted: [CodexCredentialSnapshot] = [], forceIsolated: Bool = false) throws -> CodexInstallation {
         guard usageChecks[id] == nil else { throw SwitchboardError.message("This ChatGPT account is already being checked.") }
-        guard try accounts().contains(where: { $0.id == id }) else { throw SwitchboardError.message("This ChatGPT account is no longer saved.") }
-        let state = try state()
+        guard let account = try accounts().first(where: { $0.id == id }) else { throw SwitchboardError.message("This ChatGPT account is no longer saved.") }
+        // Unsupported live storage still fails closed. A missing or malformed shared login
+        // must not prevent reading a different, independently saved account.
+        try live.installation.requireFileStorage()
+        let current = try? live.snapshot()
         let installation: CodexInstallation
-        if state.activeID == id {
+        let prepared: CodexCredentialSnapshot
+        if !forceIsolated, let current, matches(current, account: account), !attempted.contains(current) {
             // Use the live file, not a token clone. Codex can rotate it during account/read.
-            if let current = try live.snapshot() { try capture(current) }
+            try capture(current)
             installation = live.installation
+            prepared = current
         } else {
             installation = usageInstallation(id)
-            let snapshot = try recoverProfileCredential(id)
+            let snapshot = try recoveryCandidates(id).first { !attempted.contains($0) }
+            guard let snapshot else { throw CodexAuthenticationError.noWorkingCopy }
             try createProfile(installation)
-            try CodexLoginStore(installation: installation).apply(snapshot)
+            try CodexLoginStore(installation: installation).applyUsageCopy(snapshot)
+            prepared = snapshot
         }
-        usageChecks[id] = UsageCheck(installation: installation, saved: try credential(for: id))
+        // Keep the vault baseline separate from the selected recovery candidate.
+        usageChecks[id] = UsageCheck(installation: installation,
+            saved: try secrets.read(service: vaultService, account: id.uuidString), prepared: prepared)
         return installation
+    }
+
+    public func preparedCredential(_ id: UUID) throws -> CodexCredentialSnapshot {
+        guard let check = usageChecks[id] else {
+            throw CodexAuthenticationError.noWorkingCopy
+        }
+        return check.prepared
     }
 
     public func collectUsageCredentials(_ id: UUID, from installation: CodexInstallation) throws {
         guard let check = usageChecks.removeValue(forKey: id), check.installation == installation else {
             throw SwitchboardError.message("This ChatGPT usage check is no longer current. Refresh again.")
         }
-        guard let snapshot = try CodexLoginStore(installation: installation).snapshot() else {
-            throw SwitchboardError.message("Codex did not retain this account's login. Sign in again.")
+        guard let snapshot = try? CodexLoginStore(installation: installation).snapshot() else {
+            throw CodexAuthenticationError.noWorkingCopy
         }
         let identity = try snapshot.validated()
         guard let account = try accounts().first(where: { $0.id == id }),
               identity.accountUUID == account.accountUUID, identity.organizationUUID == account.organizationUUID else {
-            throw SwitchboardError.message("The Codex login changed during the usage check. Refresh again.")
+            throw CodexAuthenticationError.loginChanged
         }
-        let current = try credential(for: id)
-        guard current == check.saved || current == snapshot else {
+        let current = try secrets.read(service: vaultService, account: id.uuidString)
+        let decoded = current.flatMap { try? decoder.decode(CodexCredentialSnapshot.self, from: $0) }
+        guard current == check.saved || decoded == snapshot else {
             throw SwitchboardError.message("A newer ChatGPT login was saved during the usage check. The newer saved login was kept.")
         }
         try capture(snapshot)
     }
 
     private func recoverProfileCredential(_ id: UUID) throws -> CodexCredentialSnapshot {
-        let saved = try credential(for: id)
-        guard let profile = try CodexLoginStore(installation: usageInstallation(id)).snapshot(),
-              profile.refreshedAt ?? .distantPast > saved.refreshedAt ?? .distantPast else { return saved }
-        let expected = try saved.validated(), actual = try profile.validated()
-        guard expected.accountUUID == actual.accountUUID, expected.organizationUUID == actual.organizationUUID else {
+        let candidate = try recoveryCandidates(id).first
+        guard let candidate else { throw CodexAuthenticationError.noWorkingCopy }
+        if (try? credential(for: id)) != candidate { try capture(candidate) }
+        return candidate
+    }
+
+    private func recoveryCandidates(_ id: UUID) throws -> [CodexCredentialSnapshot] {
+        guard let account = try accounts().first(where: { $0.id == id }) else { return [] }
+        // Keychain access errors are not equivalent to a missing copy. Never hide them.
+        let primaryData = try secrets.read(service: vaultService, account: id.uuidString)
+        let primary = primaryData.flatMap { try? decoder.decode(CodexCredentialSnapshot.self, from: $0) }
+        let profile = try? CodexLoginStore(installation: usageInstallation(id)).snapshot()
+        if let profile, !matches(profile, account: account) {
             throw SwitchboardError.message("The saved ChatGPT usage profile belongs to another account. No login was changed.")
         }
-        // A prior process may have exited after Codex rotated its token but before collection.
-        try capture(profile)
-        return profile
+        var candidates = ([primary, profile].compactMap { $0 } + (try backups(id)))
+            .filter { matches($0, account: account) }
+        // Recover a rotation that completed immediately before an interrupted usage check.
+        candidates = candidates.enumerated().sorted {
+            let lhs = $0.element.refreshedAt ?? .distantPast, rhs = $1.element.refreshedAt ?? .distantPast
+            return lhs == rhs ? $0.offset < $1.offset : lhs > rhs
+        }.map(\.element)
+        return candidates.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
     }
 
     private func createProfile(_ installation: CodexInstallation) throws {

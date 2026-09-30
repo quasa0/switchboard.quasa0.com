@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <title>Switchboard updates</title>
+    <link>https://switchboard.quasa0.com/</link>
+    <item>
+      <title>Switchboard 0.6.0</title>
+      <pubDate>Wed, 30 Sep 2026 15:56:12 GMT</pubDate>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/quasa0/switchboard/releases/download/v0.6.0/Switchboard-0.6.0-universal.zip" length="3359226" type="application/octet-stream" sparkle:version="12" sparkle:shortVersionString="0.6.0" sparkle:edSignature="Z8VgnbVCMAUbAc5yldfKhgLrHS+YafO2jnSVS41Bxjg2ZuxSp4GJCkwPOk6tzQ6jtLBXesbr8eGFvA5RSZw9DA=="></enclosure>
+    </item>
+  </channel>
+</rss><!-- sparkle-signatures:
+edSignature: usBWSw2WfU8mtEWlZiN8Ucu7TrWdol1Whoc/Yh8kuGrbOsUmFuL0aCcBe5xFTvFQ7S2ypfFEP9FwJLzbakr5CA==
+length: 1034
+-->

@@ -150,7 +150,11 @@ public final class AccountRepository {
         guard let index = accounts.firstIndex(where: { $0.id == id }) else {
             throw SwitchboardError.message("This account is no longer saved.")
         }
-        accounts[index].claudeBilling = billing
+        var updated = billing
+        if updated.resetReadFailed == true, updated.resetSnapshot == nil {
+            updated.resetSnapshot = accounts[index].claudeBilling?.resetSnapshot
+        }
+        accounts[index].claudeBilling = updated
         try save(accounts)
     }
 
@@ -172,7 +176,11 @@ public final class AccountRepository {
     public func updateUsage(_ id: UUID, usage: UsageSnapshot) throws {
         var accounts = try accounts()
         guard let index = accounts.firstIndex(where: { $0.id == id }) else { return }
-        accounts[index].usage = usage
+        var updated = usage
+        if updated.claudeResetReadFailed == true, updated.claudeResetSnapshot == nil {
+            updated.claudeResetSnapshot = accounts[index].usage?.claudeResetSnapshot
+        }
+        accounts[index].usage = updated
         try save(accounts)
     }
 

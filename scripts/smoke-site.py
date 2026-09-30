@@ -32,7 +32,7 @@ html, headers = fetch(base)
 assert b'All your AI accounts.' in html and b'id="install"' in html, 'Wrong or incomplete entry page'
 page = Assets()
 page.feed(html.decode())
-for path in sorted(page.paths | {'/install.md','/llms.txt','/release.json','/fonts/OFL.txt','/robots.txt','/sitemap.xml'}):
+for path in sorted(page.paths | {'/install.md','/llms.txt','/release.json','/appcast.xml','/fonts/OFL.txt','/robots.txt','/sitemap.xml'}):
     data, asset_headers = fetch(urljoin(base, path))
     if path.endswith('.js'):
         assert 'javascript' in asset_headers.get('Content-Type',''), 'Wrong script MIME'

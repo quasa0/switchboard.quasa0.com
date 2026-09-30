@@ -4,6 +4,39 @@ import Darwin
 @testable import SwitchboardCore
 
 final class CodexUsageTests: XCTestCase {
+    func testCreditOnlyResponsePreservesDecimalBalancePlanAndUnlimited() throws {
+        let reply = """
+        {"result":{"rateLimitsByLimitId":{
+          "codex":{"planType":"pro","credits":{"hasCredits":true,"unlimited":false,"balance":"65000.125"}},
+          "workspace":{"credits":{"hasCredits":true,"unlimited":true,"balance":null}}
+        }}}
+        """
+        let usage = try CodexUsageClient.parseUsageResponse(Data(reply.utf8))
+        XCTAssertNil(usage.fiveHour)
+        XCTAssertNil(usage.sevenDay)
+        XCTAssertNil(usage.manualResets)
+        XCTAssertEqual(usage.reportedPlan, "pro")
+        XCTAssertEqual(usage.creditBalances?.map(\.id), ["codex", "workspace"])
+        XCTAssertEqual(usage.creditBalances?.first?.balance, "65000.125")
+        XCTAssertEqual(usage.creditBalances?.last?.unlimited, true)
+        XCTAssertNil(usage.creditBalances?.last?.balance)
+        XCTAssertEqual(try JSONDecoder().decode(UsageSnapshot.self, from: JSONEncoder().encode(usage)), usage)
+    }
+
+    func testZeroUnknownAndMissingCreditBalancesStayDistinct() throws {
+        XCTAssertNil(try CodexUsageClient.parseUsageResponse(Data(Self.reply.utf8)).creditBalances)
+        for balance in ["\"0\"", "null"] {
+            let reply = "{\"result\":{\"rateLimits\":{\"credits\":{\"hasCredits\":false,\"unlimited\":false,\"balance\":\(balance)}}}}"
+            let usage = try CodexUsageClient.parseUsageResponse(Data(reply.utf8))
+            XCTAssertEqual(usage.creditBalances?.first?.hasCredits, false)
+            XCTAssertEqual(usage.creditBalances?.first?.balance, balance == "null" ? nil : "0")
+        }
+        for balance in ["-1", "NaN", "1,000", "USD 10", "1e5"] {
+            let reply = "{\"result\":{\"rateLimits\":{\"credits\":{\"hasCredits\":true,\"unlimited\":false,\"balance\":\"\(balance)\"}}}}"
+            XCTAssertThrowsError(try CodexUsageClient.parseUsageResponse(Data(reply.utf8)))
+        }
+    }
+
     func testMainWindowsUseActualDurationAndUnixSeconds() throws {
         let result = try CodexUsageClient.parseUsageResponse(Data(Self.reply.utf8), fetchedAt: Date(timeIntervalSince1970: 100))
         XCTAssertEqual(result.fiveHour?.utilization, 12)
@@ -207,6 +240,74 @@ final class CodexUsageTests: XCTestCase {
         try fixture.assertChildStopped()
     }
 
+    func testUnauthorizedAccountDiscoveryRefreshesOnceBeforeReadingUsage() async throws {
+        let fixture = try Fixture(script: Self.protocolPreamble + """
+        account = account_request()
+        print(json.dumps({'id':account['id'],'error':{'code':-32603,'message':'workspace routing discovery unauthorized (401)'}}), flush=True)
+        refresh = json.loads(sys.stdin.readline())
+        assert refresh['method'] == 'account/read'
+        assert refresh['params'] == {'refreshToken':True}
+        Path(os.environ['CODEX_HOME'], 'auth.json').write_text('synthetic-rotated-at-discovery')
+        print(json.dumps({'id':refresh['id'],'result':{'account':{'type':'chatgpt'}}}), flush=True)
+        usage = json.loads(sys.stdin.readline())
+        assert usage['method'] == 'account/rateLimits/read'
+        reply = json.loads(\(Self.pythonString(Self.reply)))
+        reply['id'] = usage['id']
+        print(json.dumps(reply), flush=True)
+        assert sys.stdin.read() == ''
+        """)
+        defer { fixture.remove() }
+        let result = try await CodexUsageClient(executable: fixture.executable).fetch(installation: fixture.installation)
+        XCTAssertEqual(result.fiveHour?.utilization, 12)
+        XCTAssertEqual(try String(contentsOf: fixture.installation.authFile, encoding: .utf8), "synthetic-rotated-at-discovery")
+        try fixture.assertChildStopped()
+    }
+
+    func testAccountAndUsageUnauthorizedShareOneRefreshBudget() async throws {
+        let fixture = try Fixture(script: Self.protocolPreamble + """
+        account = account_request()
+        print(json.dumps({'id':account['id'],'error':{'code':-32603,'message':'workspace routing discovery unauthorized (401)'}}), flush=True)
+        refresh = json.loads(sys.stdin.readline())
+        assert refresh['params'] == {'refreshToken':True}
+        print(json.dumps({'id':refresh['id'],'result':{'account':{'type':'chatgpt'}}}), flush=True)
+        usage = json.loads(sys.stdin.readline())
+        assert usage['method'] == 'account/rateLimits/read'
+        print(json.dumps({'id':usage['id'],'error':{'code':-32603,'message':'failed to fetch codex rate limits: GET https://example.test/usage failed: 401 Unauthorized; body=synthetic-private'}}), flush=True)
+        assert sys.stdin.read() == ''
+        Path(__file__ + '.clean-exit').write_text('yes')
+        """)
+        defer { fixture.remove() }
+        do {
+            _ = try await CodexUsageClient(executable: fixture.executable).fetch(installation: fixture.installation)
+            XCTFail("Expected typed authentication failure")
+        } catch {
+            XCTAssertTrue(error is CodexAuthenticationError)
+            XCTAssertFalse(error.localizedDescription.contains("synthetic-private"))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.executable.path + ".clean-exit"))
+        try fixture.assertChildStopped()
+    }
+
+    func testWorkspaceNetworkFailureDoesNotRefreshOrRequireLogout() async throws {
+        let fixture = try Fixture(script: Self.protocolPreamble + """
+        account = account_request()
+        print(json.dumps({'id':account['id'],'error':{'code':-32603,'message':'workspace routing discovery failed'}}), flush=True)
+        assert sys.stdin.read() == ''
+        Path(__file__ + '.clean-exit').write_text('yes')
+        """)
+        defer { fixture.remove() }
+        do {
+            _ = try await CodexUsageClient(executable: fixture.executable).fetch(installation: fixture.installation)
+            XCTFail("Expected workspace service failure")
+        } catch {
+            XCTAssertFalse(error is CodexAuthenticationError)
+            XCTAssertTrue(error.localizedDescription.contains("workspace service"))
+            XCTAssertFalse(error.localizedDescription.contains("Sign in"))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.executable.path + ".clean-exit"))
+        try fixture.assertChildStopped()
+    }
+
     func testUnauthorizedUsageRefreshesOnceAndRetainsRotatedCredentials() async throws {
         let fixture = try Fixture(script: Self.protocolPreamble + """
         request = handshake()
@@ -294,6 +395,14 @@ final class CodexUsageTests: XCTestCase {
         XCTAssertNil(error.httpStatus)
         XCTAssertTrue(error.displayError(stage: "account/read").localizedDescription.contains("Update Codex"))
         XCTAssertTrue(error.displayError(stage: "account/read").localizedDescription.contains("RPC -32602"))
+        for message in ["workspace routing discovery failed", "workspace routing discovery timed out",
+                        "selected workspace missing from routing discovery", "synthetic-private 401 Unauthorized",
+                        "body=workspace routing discovery unauthorized (401)"] {
+            let failure = try JSONDecoder().decode(CodexUsageFailure.self,
+                from: jsonData(["code": -32603, "message": message]))
+            XCTAssertNil(failure.httpStatus)
+            XCTAssertFalse(failure.isAuthenticationFailure)
+        }
     }
 
     func testRPCErrorPreservesRefreshedAuthAndHidesDiagnostics() async throws {
@@ -418,7 +527,7 @@ final class CodexUsageTests: XCTestCase {
     import json, os, signal, sys, time
     from pathlib import Path
     Path(__file__ + '.pid').write_text(str(os.getpid()))
-    def handshake():
+    def account_request():
         first = json.loads(sys.stdin.readline())
         assert first['method'] == 'initialize'
         assert first['params']['clientInfo']['name'] == 'switchboard'
@@ -427,6 +536,9 @@ final class CodexUsageTests: XCTestCase {
         account = json.loads(sys.stdin.readline())
         assert account['method'] == 'account/read'
         assert account['params'] == {'refreshToken':False}
+        return account
+    def handshake():
+        account = account_request()
         print(json.dumps({'id':account['id'],'result':{'account':{'type':'chatgpt','email':'sample@example.test','planType':'plus'},'requiresOpenaiAuth':True}}), flush=True)
         return json.loads(sys.stdin.readline())
 

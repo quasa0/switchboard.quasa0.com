@@ -194,15 +194,15 @@ final class CodexAccountRepositoryTests: CodexTestCase {
         XCTAssertEqual(try reopened.credential(for: account.id), rotated)
         XCTAssertEqual(try reopened.live.snapshot(), rotated)
     }
-    func testMissingTargetAndRemovalPreserveLiveLogin() throws {
+    func testMissingPrimaryRestoresFromBackupAndRemovalPreservesLiveLogin() throws {
         let first = try snapshot()
         try seed(first)
         let saved = try repository.capture(snapshot("b"))
         try secrets.delete(service: CodexAccountRepository.vaultService, account: saved.id.uuidString)
-        XCTAssertThrowsError(try repository.activate(saved.id))
-        XCTAssertEqual(try repository.live.snapshot(), first)
+        try repository.activate(saved.id)
+        XCTAssertEqual(try repository.live.snapshot(), try snapshot("b"))
         try repository.remove(saved.id)
-        XCTAssertEqual(try repository.live.snapshot(), first)
+        XCTAssertEqual(try repository.live.snapshot(), try snapshot("b"))
     }
     func testLockExcludesOtherRepository() throws {
         let other = CodexAccountRepository(directory: repository.directory, secrets: secrets, installation: installation)

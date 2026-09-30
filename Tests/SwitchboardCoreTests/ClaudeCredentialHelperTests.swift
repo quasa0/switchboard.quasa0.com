@@ -87,7 +87,7 @@ final class ClaudeCredentialHelperTests: XCTestCase {
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         Path(__file__ + '.pid').write_text(str(os.getpid()))
         time.sleep(60)
-        """, timeout: 0.3)
+        """, timeout: 2)
         defer { fixture.remove() }
         XCTAssertThrowsError(try fixture.helper.read(service: "synthetic", account: "user")) { error in
             XCTAssertTrue(error.localizedDescription.contains("timed out"))

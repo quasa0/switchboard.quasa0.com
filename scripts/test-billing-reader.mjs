@@ -16,6 +16,7 @@ const organization = 'synthetic-org';
 const sensitive = 'synthetic-sensitive-value-never-export';
 const bootstrapPath = '/api/bootstrap?statsig_hashing_algorithm=djb2&growthbook_format=sdk&include_system_prompts=false';
 const billingPath = id => `/api/organizations/${encodeURIComponent(id)}/subscription_details`;
+const resetPath = id => `/api/organizations/${encodeURIComponent(id)}/usage?cedar_ember=1&skip_spend=1`;
 const allowedFields = ['next_charge_at', 'next_charge_date', 'plan_ending_at', 'plan_ending_before',
   'status', 'payment_paused_until', 'gift_details'];
 const bootstrap = (overrides = {}) => ({ account: { uuid: account, memberships: [
@@ -25,6 +26,9 @@ const bootstrap = (overrides = {}) => ({ account: { uuid: account, memberships: 
 const response = (body, status = 200) => ({ body, status });
 
 async function execute(steps, expectedOrganization = organization) {
+  if (steps.length === 2 && steps[1].status === 200 && steps[1].body && typeof steps[1].body === 'object' && !steps[1].jsonError) {
+    steps = [...steps, response({cedar_ember: {eligible: true, grants: []}})];
+  }
   const calls = [];
   const timers = [];
   const controllers = [];
@@ -73,7 +77,7 @@ async function execute(steps, expectedOrganization = organization) {
   assert.equal(timers[0].delay, 10_000, 'Reader must retain a bounded request timeout');
   assert.equal(timers[0].cleared, true, 'Reader must clear its timer on every return path');
   for (const [index, call] of calls.entries()) {
-    assert.equal(call.path, index === 0 ? bootstrapPath : billingPath(expectedOrganization));
+    assert.equal(call.path, index === 0 ? bootstrapPath : index === 1 ? billingPath(expectedOrganization) : resetPath(expectedOrganization));
     assert.equal(call.options.credentials, 'include');
     assert.equal(call.options.redirect, 'error', 'Authenticated requests must not follow redirects');
     assert.equal(call.options.cache, 'no-store');
@@ -89,7 +93,7 @@ async function execute(steps, expectedOrganization = organization) {
     assert.deepEqual(Object.keys(envelope), ['error']);
     assert.ok(['wrongAccount', 'signedOut', 'unavailable'].includes(envelope.error));
   } else {
-    assert.deepEqual(Object.keys(envelope).sort(), ['accountUUID', 'details', 'organizationUUID']);
+    assert.deepEqual(Object.keys(envelope).sort(), ['accountUUID', 'details', 'organizationUUID', 'resetDetails']);
     assert.equal(envelope.accountUUID, account);
     assert.equal(envelope.organizationUUID, expectedOrganization);
     assert.ok(Object.keys(envelope.details).every(key => allowedFields.includes(key)));
@@ -107,6 +111,25 @@ const expectError = async (steps, error, jsonReads) => {
   assert.deepEqual(result.envelope, { error });
   if (jsonReads !== undefined) assert.equal(result.jsonReads, jsonReads);
 };
+
+test('reads full reset grants without exporting profile or usage data', async () => {
+  const grant = {id:'launch-reset',resets_left:1,clears:['five_hour','seven_day'],
+    starts_at:'2026-09-22T16:00:00Z',ends_at:'2026-10-22T16:00:00Z',paused:false,usable_now:true};
+  const result = await execute([response(bootstrap()),response({status:'active'}),
+    response({cedar_ember:{eligible:true,grants:[{...grant,event_props:sensitive}],event_props:sensitive},spend:sensitive})]);
+  assert.deepEqual(result.envelope.resetDetails,{eligible:true,grants:[grant]});
+});
+for (const status of [401,403,429,500]) {
+  test(`reset HTTP ${status} preserves billing without inventing zero resets`,async()=>{
+    const result=await execute([response(bootstrap()),response({status:'active'}),response({error:sensitive},status)]);
+    assert.deepEqual(result.envelope.details,{status:'active'});
+    assert.equal(result.envelope.resetDetails,null);
+  });
+}
+test('missing reset block remains unavailable',async()=>{
+  const result=await execute([response(bootstrap()),response({status:'active'}),response({five_hour:null})]);
+  assert.equal(result.envelope.resetDetails,null);
+});
 
 test('uses the matching non-first organization and exports only display metadata', async () => {
   const id = 'synthetic-org /?%';
@@ -129,7 +152,7 @@ test('uses the matching non-first organization and exports only display metadata
     status: 'active', payment_paused_until: 1_800_000_000,
     gift_details: { paid_through: '2027-01-27' },
   });
-  assert.equal(result.jsonReads, 2);
+  assert.equal(result.jsonReads, 3);
   assert.equal(result.aborted, false);
 });
 

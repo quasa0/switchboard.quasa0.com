@@ -27,17 +27,9 @@ actor CodexAccountEngine: SubscriptionEngine {
         refreshing = true
         defer { refreshing = false }
         let executable = try CodexExecutable.find()
-        let installation = try repository.withLock { try repository.prepareUsage(id) }
-        let result: Result<UsageSnapshot, Error>
-        do { result = .success(try await CodexUsageClient(executable: executable).fetch(installation: installation)) }
-        catch { result = .failure(error) }
-        // Codex may rotate its refresh token before a later request fails or is cancelled.
-        // Collect exactly once on every completion path, before publishing any usage.
-        try repository.withLock {
-            try repository.collectUsageCredentials(id, from: installation)
-            if case let .success(usage) = result { try repository.updateUsage(id, usage: usage) }
+        try await CodexUsageRecovery.fetch(id, repository: repository) { installation in
+            try await CodexUsageClient(executable: executable).fetch(installation: installation)
         }
-        _ = try result.get()
     }
 
     func beginLogin() throws {

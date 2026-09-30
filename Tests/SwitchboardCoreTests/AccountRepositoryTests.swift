@@ -3,6 +3,21 @@ import XCTest
 @testable import SwitchboardCore
 
 final class AccountRepositoryTests: RepositoryTestCase {
+    func testFailedResetReadKeepsPreviousGrantsAndObservationTimeForThatAccount() throws {
+        let a = try repository.capture(snapshot()), b = try repository.capture(snapshot("b"))
+        let checked = Date(timeIntervalSince1970:1_790_000_000)
+        let resets = try ClaudeResetSnapshot.parse(["eligible":true,"grants":[]],checkedAt:checked)
+        try repository.setClaudeBilling(a.id,billing:ClaudeBillingSnapshot(status:"active",resetSnapshot:resets,resetReadFailed:false))
+        try repository.setClaudeBilling(a.id,billing:ClaudeBillingSnapshot(status:"active",resetReadFailed:true))
+        let accounts = try repository.accounts()
+        XCTAssertEqual(accounts.first(where:{$0.id==a.id})?.claudeBilling?.resetSnapshot,resets)
+        XCTAssertEqual(accounts.first(where:{$0.id==a.id})?.claudeBilling?.resetReadFailed,true)
+        XCTAssertNil(accounts.first(where:{$0.id==b.id})?.claudeBilling)
+        let empty = try ClaudeResetSnapshot.parse(["eligible":false,"grants":[]])
+        try repository.setClaudeBilling(a.id,billing:ClaudeBillingSnapshot(status:"active",resetSnapshot:empty,resetReadFailed:false))
+        XCTAssertEqual(try repository.accounts().first(where:{$0.id==a.id})?.claudeBilling?.resetSnapshot,empty)
+    }
+
     func testWebBillingIsMetadataOnlyAndSurvivesCredentialRecapture() throws {
         let first = try snapshot()
         try seedLive(first)

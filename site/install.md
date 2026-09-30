@@ -3,7 +3,7 @@
 Switchboard is a native macOS app for saved Claude Code and Codex subscription logins.
 Source: https://github.com/quasa0/switchboard
 License: MIT
-Current release: 0.5.2
+Current release: 0.6.0
 Requirements: macOS 14 or newer; Apple silicon (arm64) or Intel (x86_64).
 
 ## Agent boundaries
@@ -24,14 +24,14 @@ set -eu
 [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 14 ] || { echo 'macOS 14+ required.' >&2; exit 1; }
 case "$(uname -m)" in arm64|x86_64) ;; *) echo 'Unsupported architecture.' >&2; exit 1 ;; esac
 SWITCHBOARD_DOWNLOAD=$(mktemp -d "${TMPDIR:-/tmp}/switchboard-install.XXXXXX")
-SWITCHBOARD_RELEASE_URL=https://github.com/quasa0/switchboard/releases/download/v0.5.2
-curl --fail --location --proto '=https' --tlsv1.2 "$SWITCHBOARD_RELEASE_URL/Switchboard-0.5.2-universal.zip" -o "$SWITCHBOARD_DOWNLOAD/Switchboard-0.5.2-universal.zip"
+SWITCHBOARD_RELEASE_URL=https://github.com/quasa0/switchboard/releases/download/v0.6.0
+curl --fail --location --proto '=https' --tlsv1.2 "$SWITCHBOARD_RELEASE_URL/Switchboard-0.6.0-universal.zip" -o "$SWITCHBOARD_DOWNLOAD/Switchboard-0.6.0-universal.zip"
 curl --fail --location --proto '=https' --tlsv1.2 "$SWITCHBOARD_RELEASE_URL/SHA256SUMS.txt" -o "$SWITCHBOARD_DOWNLOAD/SHA256SUMS.txt"
-(cd "$SWITCHBOARD_DOWNLOAD" && awk '$2 == "Switchboard-0.5.2-universal.zip" { print }' SHA256SUMS.txt > ZIP.sha256 && test "$(wc -l < ZIP.sha256 | tr -d ' ')" = 1 && shasum -a 256 -c ZIP.sha256)
-ditto -x -k "$SWITCHBOARD_DOWNLOAD/Switchboard-0.5.2-universal.zip" "$SWITCHBOARD_DOWNLOAD/unpacked"
+(cd "$SWITCHBOARD_DOWNLOAD" && awk '$2 == "Switchboard-0.6.0-universal.zip" { print }' SHA256SUMS.txt > ZIP.sha256 && test "$(wc -l < ZIP.sha256 | tr -d ' ')" = 1 && shasum -a 256 -c ZIP.sha256)
+ditto -x -k "$SWITCHBOARD_DOWNLOAD/Switchboard-0.6.0-universal.zip" "$SWITCHBOARD_DOWNLOAD/unpacked"
 codesign --verify --deep --strict "$SWITCHBOARD_DOWNLOAD/unpacked/Switchboard.app"
 test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$SWITCHBOARD_DOWNLOAD/unpacked/Switchboard.app/Contents/Info.plist")" = com.quasa0.switchboard
-test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$SWITCHBOARD_DOWNLOAD/unpacked/Switchboard.app/Contents/Info.plist")" = 0.5.2
+test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$SWITCHBOARD_DOWNLOAD/unpacked/Switchboard.app/Contents/Info.plist")" = 0.6.0
 ```
 
 Stop on a failed download, checksum mismatch, unexpected bundle identifier, or invalid signature. Checksums are served by the same publisher; they are integrity checks, not independent publisher authentication.
@@ -64,12 +64,12 @@ Codex must use file-based credential storage. Keyring, auto, and ephemeral stora
 
 ## Build from source instead
 
-Requires Swift 5.10+ through Xcode Command Line Tools. No package dependencies.
+Requires Swift 5.10+ through Xcode Command Line Tools. Sparkle 2.10.0 is pinned for native signed updates.
 
 ```sh
 git clone https://github.com/quasa0/switchboard.git
 cd switchboard
-git checkout --detach v0.5.2
+git checkout --detach v0.6.0
 swift test
 ./scripts/install.sh
 ```

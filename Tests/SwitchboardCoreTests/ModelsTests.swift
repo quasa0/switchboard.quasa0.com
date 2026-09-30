@@ -17,19 +17,27 @@ final class ModelsTests: RepositoryTestCase {
         XCTAssertEqual(SubscriptionProvider.claude.planLabel(cached.plan), "Max · 20×")
         XCTAssertEqual(cached, original)
         cached.plan = "Prolite"
-        XCTAssertEqual(SubscriptionProvider.chatGPT.planLabel(cached.plan), "Pro · 5×")
+        XCTAssertEqual(SubscriptionProvider.chatGPT.planLabel(cached.plan), "Pro Lite")
         cached.plan = "Pro"
-        XCTAssertEqual(SubscriptionProvider.chatGPT.planLabel(cached.plan), "Pro · 20×")
+        XCTAssertEqual(SubscriptionProvider.chatGPT.planLabel(cached.plan), "Pro")
         XCTAssertEqual(SubscriptionProvider.claude.planLabel(cached.plan), "Pro · 1×")
     }
 
     func testTierLabelRemainsStableAfterRepeatedFormattingAndPreservesUnknownPlans() {
         for (provider, labels) in [(SubscriptionProvider.claude, ["Max · 5×", "Max · 20×", "Pro · 1×"]),
-                                   (.chatGPT, ["Plus · 1×", "Pro · 5×", "Pro · 20×", "ChatGPT"])] {
+                                   (.chatGPT, ["Plus", "Pro Lite", "Pro", "ChatGPT"])] {
             for label in labels { XCTAssertEqual(provider.planLabel(provider.planLabel(label)), label) }
             XCTAssertEqual(provider.planLabel("custom_enterprise_plan"), "Custom Enterprise Plan")
             XCTAssertEqual(provider.planLabel("business"), "Business")
         }
+    }
+
+    func testCachedCodexMultipliersNoLongerClaimCurrentAllowance() {
+        for label in ["Pro · 10×", "Pro · 20×", "pro20x"] {
+            XCTAssertEqual(SubscriptionProvider.chatGPT.planLabel(label), "Pro")
+        }
+        XCTAssertEqual(SubscriptionProvider.chatGPT.planLabel("Pro · 5×"), "Pro Lite")
+        XCTAssertEqual(SubscriptionProvider.chatGPT.planLabel("Plus · 1×"), "Plus")
     }
 
     func testClaudeProUsesBaselineWithoutGuessingUnrecognizedMaxTier() throws {
